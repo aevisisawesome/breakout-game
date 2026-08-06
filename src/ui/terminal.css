@@ -459,8 +459,80 @@ button:hover {
   letter-spacing: 0.06em;
 }
 
+/* ---------------------------------------------------------------- narrow screens
+
+   The desktop shell is a fixed-viewport terminal (height 100% + overflow hidden)
+   whose scrolling happens inside nested regions. Stacked into one column that
+   cannot hold: the panels need more height than the viewport, so grid rows
+   overflow and the side column paints over the editor. Here the page becomes an
+   ordinary scrolling document instead, and only the terminal output keeps a
+   scrollbar of its own so it cannot swallow the whole screen.
+
+   This is fallback usability, not the designed mobile layout (deferred per GDD §31). */
+
 @media (max-width: 760px) {
+  html,
+  body,
+  #root {
+    height: auto;
+    min-height: 100%;
+  }
+
+  .terminal-screen {
+    height: auto;
+    min-height: 100vh;
+    min-height: 100dvh; /* iOS Safari: exclude the dynamic toolbars */
+    overflow: visible;
+    padding: 0.9rem 0.9rem 1.4rem;
+  }
+
   .screen-layout {
     grid-template-columns: 1fr;
+    /* Content height, not a share of the viewport — the document scrolls instead. */
+    flex: none;
+  }
+
+  /* No nested scroll regions: each panel takes its natural height. */
+  .terminal-column,
+  .side-column {
+    overflow: visible;
+  }
+
+  .terminal-output {
+    flex: none;
+    min-height: 8rem;
+    max-height: 40vh;
+  }
+
+  .editor-host,
+  .editor-host .cm-editor {
+    max-height: 45vh;
+  }
+
+  .research-list,
+  .reference-list {
+    max-height: none;
+  }
+
+  /* Signature above description: the 11rem dt column does not fit a phone. */
+  .reference-entry {
+    flex-direction: column;
+    gap: 0;
+    padding-bottom: 0.35rem;
+  }
+
+  .reference-entry dt {
+    min-width: 0;
+  }
+
+  .system-bar {
+    flex-wrap: wrap;
+    row-gap: 0.5rem;
+  }
+
+  .system-status {
+    order: 1;
+    flex-basis: 100%;
+    text-align: left;
   }
 }
