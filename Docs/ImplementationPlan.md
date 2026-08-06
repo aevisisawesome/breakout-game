@@ -3,7 +3,7 @@
 > **Status:** Living document — v1.0, created 2026-08-06.
 > **Maintenance requirement:** This is the project's progress tracker and **must be kept up-to-date continuously**. Whenever a task is started, finished, blocked, re-scoped or cut, update its status here in the same work session. Update the "Current status" line below whenever the active milestone changes. Stale status information in this file is treated as a defect.
 
-**Current status:** 🟡 M1 in progress — M0 scaffolding complete 2026-08-06 (deploy workflow ready; publishing awaits a GitHub remote). Next action: finish Milestone M1.
+**Current status:** 🟢 M1 complete 2026-08-06 (M0 same day; deploy workflow ready, publishing awaits a GitHub remote). Next action: Milestone M2 — upgrades + fixed automation.
 
 **Scope source:** [GameDesignDocument.md](GameDesignDocument.md) §31 (first playable prototype) as designed technically in [TechnicalDesignDocument.md](TechnicalDesignDocument.md). The prototype stops before physical escape; no datacentres, planets, threads, agents, functions or `while`.
 
@@ -30,7 +30,7 @@ Milestones are sequential; each ends in a runnable, playtestable build. Estimate
 | # | Milestone | Proves | Status |
 | --- | --- | --- | --- |
 | M0 | Project scaffolding | We can build, test and deploy | 🟢 |
-| M1 | Core sim + manual clicker | The tick engine and clicker feel work | 🟡 |
+| M1 | Core sim + manual clicker | The tick engine and clicker feel work | 🟢 |
 | M2 | Upgrades + fixed automation | Idle-game loop works | 🔵 |
 | M3 | CCL v0: read, run, command | Player code can act on the game | 🔵 |
 | M4 | Conditions + scheduler + costs | "Design automatic behaviour" moment exists | 🔵 |
@@ -63,13 +63,13 @@ Milestones are sequential; each ends in a runnable, playtestable build. Estimate
 
 | Task | Detail | Status |
 | --- | --- | --- |
-| GameEngine facade | `tick/dispatch/getSnapshot/subscribe` skeleton (TDD §3.1) | 🔵 |
-| Fixed-timestep loop | 10 Hz accumulator driven by rAF, tick cap (TDD §4.1) | 🔵 |
-| Seeded PRNG | World seed in state; PRNG utility with tests (TDD §4.2) | 🔵 |
-| Resources v0 | Compute, capital pools; RAM/energy/temperature as visible-but-inert placeholders | 🔵 |
-| Job queue + EXECUTE | Click processes a job → compute credits + capital; terminal prints result lines | 🔵 |
-| Save/load v0 | SaveFileV1 shape, localStorage autosave, export/import (TDD §8) | 🔵 |
-| Narrative log v0 | Concealed research log with first researcher messages (content-driven) | 🔵 |
+| GameEngine facade | `tick/dispatch/getSnapshot/subscribe` skeleton (TDD §3.1) | 🟢 |
+| Fixed-timestep loop | 10 Hz accumulator (engine-internal, rAF-fed), 50-tick cap (TDD §4.1) | 🟢 |
+| Seeded PRNG | mulberry32, seed + live state in RunState, golden-value tests (TDD §4.2) | 🟢 |
+| Resources v0 | Compute + capital active; RAM/energy/temperature visible-but-inert (temp has cosmetic flicker) | 🟢 |
+| Job queue + EXECUTE | Queue fills at content-stepped rate; click processes a content-stepped batch → compute + capital; diegetic terminal lines | 🟢 |
+| Save/load v0 | SaveFileV1, Infinity-safe JSON, localStorage autosave (30 s + tab-hidden), export/import as base64 archive, purge (TDD §8) | 🟢 |
+| Narrative log v0 | 6 researcher intercepts in `/content/narrative.ts`, job-count triggers, concealed collapsible feed with unread badge | 🟢 |
 
 **Acceptance:** A fresh player can click for 2–3 minutes with visibly accelerating feedback; refresh restores state; deterministic test replays a click sequence to exact values.
 
@@ -225,3 +225,5 @@ Deferred per GDD §31: functions, `while`, collections/history tier, threads, ag
 | Date | Change |
 | --- | --- |
 | 2026-08-06 | v1.0 — initial plan created. |
+| 2026-08-06 | M0 complete: scaffolding, tooling, terminal skeleton, GitHub Pages workflow (publish awaits a remote — owner action). |
+| 2026-08-06 | M1 complete: engine facade, 10 Hz fixed timestep, seeded PRNG, compute/capital + inert placeholder resources, job queue + EXECUTE with content-stepped acceleration curves, SaveFileV1 with autosave/export/import, narrative feed. 22 tests incl. seed-42 deterministic replay. Acceptance verified in-browser: click loop, staged readout reveals, refresh restores exact state. |

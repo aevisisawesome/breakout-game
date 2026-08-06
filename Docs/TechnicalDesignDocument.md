@@ -61,11 +61,11 @@ The UI interacts with exactly one object:
 
 ```ts
 interface GameEngine {
-  tick(dtMs: number): void;                  // advance simulation
+  tick(dtMs: number): void;                  // advance simulation (accumulates internally)
   dispatch(action: PlayerAction): ActionResult; // clicks, purchases, script ops
   getSnapshot(): Readonly<GameSnapshot>;     // immutable view for rendering
   subscribe(listener: (events: GameEvent[]) => void): Unsubscribe;
-  save(): SaveFileV1;
+  save(now: number): SaveFileV1;             // caller supplies epoch ms — core never reads the clock
   load(save: SaveFileV1): void;
 }
 ```
@@ -78,7 +78,7 @@ interface GameEngine {
 
 ### 4.1 Time
 
-* **Fixed timestep:** the sim advances in discrete ticks of **100 ms game time (10 Hz)**. The render loop (`requestAnimationFrame`) accumulates real elapsed time and calls `tick()` the appropriate number of times (standard accumulator pattern). Rendering interpolates/reads the latest snapshot at display rate.
+* **Fixed timestep:** the sim advances in discrete ticks of **100 ms game time (10 Hz)**. The render loop (`requestAnimationFrame`) passes raw elapsed ms to `tick(dtMs)`; the **engine owns the accumulator** and runs the appropriate number of fixed steps internally (decision 2026-08-06: keeps the accumulator deterministic and directly testable). Rendering reads the latest snapshot at display rate.
 * All game rules are defined **per tick**, never per frame. Balance numbers in `/content` use per-second rates; the engine converts.
 * A hard cap (e.g. 50 ticks per frame) prevents spiral-of-death after tab suspension; time beyond the cap is handed to the offline-progression path (§4.5).
 
@@ -257,3 +257,10 @@ Record every significant technical decision or reversal here. Keep entries appen
 | 2026-08-06 | CCL as hand-written tree-walking interpreter, fuel-metered, no `eval`. | Sandboxing + cost metering are core gameplay; transpiling to JS would make both harder. Performance is a non-issue at prototype scale. |
 | 2026-08-06 | Fixed 10 Hz tick, seeded PRNG, strict core/UI separation. | Determinism needed for offline progress, testing, and later balance work; separation preserves the Steam/mobile porting path. |
 | 2026-08-06 | Prototype ships Code mode + Template mode; Block mode deferred. | Both compile to CCL text, which is the contract that keeps Block mode addable. Prototype question ("is it fun?") answerable without blocks. |
+| 2026-08-06 | Timestep accumulator lives inside `engine.tick(dtMs)`, not the UI loop; 50-tick catch-up cap drops excess time (offline path owns long gaps). | Deterministic and directly unit-testable; the UI just forwards raw elapsed ms. Interface unchanged from §3.1. |
+| 2026-08-06 | `save(now)` takes epoch ms from the caller. | /core may not read wall clocks (no browser APIs, determinism); the UI supplies `Date.now()`. |
+| 2026-08-06 | M1 "accelerating feedback" comes from content-defined step curves (batch-per-click and job arrival rate keyed to lifetime jobs processed), not purchases. | Purchasable upgrades are M2; the M1 acceptance criterion needs visible acceleration in the first minutes. Curves live in `/content/balance.ts`; M2's upgrade system layers on top. |
+| 2026-08-06 | Save serialization encodes `Infinity` capacities as a string sentinel (`__INFINITY__`) in JSON. | JSON has no Infinity literal; capital/temperature pools are uncapped per §4.3. Round-trip tested. |
+| 2026-08-06 | Snapshots resolve state-gated content for display (e.g. research entry text); /ui may import only static display data from /content (e.g. the diegetic string table), never state-dependent content. | Keeps the "UI talks to core only through the facade" rule meaningful: the sim decides what is unlocked; the UI never evaluates content triggers. |
+| 2026-08-06 | UI store is Zustand mirroring `getSnapshot()`; it re-syncs on rAF frames **and** on engine event flushes. | Dispatch results must render even when rAF is throttled (hidden/background tabs). Store holds no game state of its own. |
+| 2026-08-06 | Vitest 4 (TDD table said "Vitest" generically). Dev-only `window.__breakout = { engine }` handle exposed under `import.meta.env.DEV`. | Vitest 2/3 pulled an esbuild advisory via bundled vite 5; v4 clears `npm audit`. The dev handle enables scripted playtesting/debugging; stripped from production builds. |
