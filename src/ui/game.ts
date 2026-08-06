@@ -51,12 +51,13 @@ export async function importSaveFile(engine: GameEngine, file: File): Promise<bo
   return true;
 }
 
-/** Create the engine, restoring a stored session when one exists. */
+/** Create the engine, restoring a stored session (with offline catch-up) when one exists. */
 export function bootEngine(): GameEngine {
   const engine = createGameEngine(toSeed(Date.now()));
   const stored = loadStoredSave();
   if (stored) {
     engine.load(stored);
+    engine.advanceOffline(Date.now() - stored.savedAt);
   }
   return engine;
 }

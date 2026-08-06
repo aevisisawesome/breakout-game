@@ -1,7 +1,7 @@
 {
   "name": "breakout-game",
   "private": true,
-  "version": "0.0.1",
+  "version": "0.2.0",
   "type": "module",
   "description": "BREAK//OUT — a clicker/programming game. See /Docs for design documents.",
   "scripts": {

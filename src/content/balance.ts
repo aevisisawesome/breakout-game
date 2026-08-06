@@ -11,15 +11,35 @@ export interface ProgressStep {
 
 export const BALANCE = {
   resources: {
-    /** Compute credit buffer (ops). Fills from processed jobs; consumed by workers/scripts from M2 on. */
+    /** Compute credit buffer (ops). Fills from processed jobs; consumed by daemon overhead (M2+). */
     computeCapacity: 400,
-    /** Placeholder pools — visible but inert until M2 (RAM/energy) and M7 (temperature). */
+    /** Base RAM capacity; installs consume footprints, memory grants raise it (M2). */
     ramCapacityMb: 512,
     energyCapacity: 100,
     energyIdle: 100,
+    /** Sandbox power feed: baseline energy recharge per second (M2). */
+    energyRegenPerSec: 1.2,
+    /** Temperature is a placeholder pool — visible but inert until M7. */
     temperatureIdleC: 34,
     /** Inert flicker band for the temperature readout (visual life only, no gameplay effect). */
     temperatureFlickerC: 0.6,
+  },
+
+  workers: {
+    /** Jobs processed per second per inference daemon. */
+    jobsPerSec: 0.6,
+    /** Compute drawn from the buffer per daemon-processed job (net vs. computePerJob stays positive). */
+    computeOverheadPerJob: 0.4,
+    /** Energy drain per daemon per second while actively working (scales with the throughput multiplier). */
+    energyPerWorkerPerSec: 0.5,
+    /** Daemon throughput multiplier while the energy pool is exhausted. */
+    energyThrottledFactor: 0.25,
+    /** Click overclock: each EXECUTE extends a capped buff that multiplies daemon throughput. */
+    overclock: {
+      secPerClick: 1.5,
+      maxSec: 12,
+      multiplier: 2,
+    },
   },
 
   jobs: {
@@ -50,7 +70,11 @@ export const BALANCE = {
   save: {
     /** Terminal lines persisted in the save file (TDD §8 "log tail"). */
     terminalTailLines: 60,
-    /** Offline catch-up cap in hours — enforced from M2 (TDD §4.5); stored here from the start. */
+    /** Offline catch-up cap in hours (TDD §4.5). */
     offlineCapHours: 8,
+    /** Offline catch-up advances in coarse chunks of this many seconds (TDD §4.5). */
+    offlineChunkSec: 60,
+    /** Absences shorter than this are ignored (quick refreshes are not "offline"). */
+    offlineMinSec: 60,
   },
 } as const;

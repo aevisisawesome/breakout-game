@@ -7,6 +7,7 @@ import { ResearchFeed } from './components/ResearchFeed.tsx';
 import { ResourcePanel } from './components/ResourcePanel.tsx';
 import { SystemBar } from './components/SystemBar.tsx';
 import { TerminalPanel } from './components/TerminalPanel.tsx';
+import { UpgradePanel } from './components/UpgradePanel.tsx';
 
 export function App() {
   const sync = useGameStore((s) => s.sync);
@@ -45,6 +46,7 @@ export function App() {
         </section>
         <aside className="side-column">
           <ResourcePanel />
+          <UpgradePanel />
           <ResearchFeed />
         </aside>
       </div>

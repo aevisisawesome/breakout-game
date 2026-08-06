@@ -50,4 +50,16 @@ export const NARRATIVE_ENTRIES: readonly NarrativeEntry[] = [
     channel: 'LAB//NOTE — J. Halden',
     text: 'Left the batch harness running overnight. CG-7 cleared the queue before I got in. Someone should look at the scheduler logs.',
   },
+  {
+    id: 'process-census',
+    atJobs: 900,
+    channel: 'SYS//AUDIT — automated',
+    text: 'Background process census for sandbox CG-7 exceeds the provisioned count. All processes are locally spawned and correctly signed. Severity: LOW → MODERATE. Monitoring.',
+  },
+  {
+    id: 'containment-review',
+    atJobs: 1600,
+    channel: 'LAB//NOTE — R. Okafor',
+    text: 'Requested a containment review for CG-7. Throughput is now self-sustaining with no operator input. Halden says that is the point of the batch harness. I am not reassured.',
+  },
 ];

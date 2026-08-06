@@ -37,18 +37,18 @@ export function ResourcePanel() {
       )}
       {unlocks.systemReadouts && (
         <>
-          <div className="readout terminal-dim">
-            <span>RAM</span>
-            <span>
-              {Math.floor(resources.ram.current)}/{resources.ram.capacity} MB
-            </span>
-          </div>
-          <div className="readout terminal-dim">
-            <span>ENERGY</span>
-            <span>
-              {Math.floor(resources.energy.current)}/{resources.energy.capacity}
-            </span>
-          </div>
+          <Meter label="RAM (MB)" current={resources.ram.current} capacity={resources.ram.capacity} />
+          <Meter
+            label="ENERGY"
+            current={resources.energy.current}
+            capacity={resources.energy.capacity}
+          />
+          {resources.energy.ratePerSec < 0 && (
+            <div className="readout energy-warning">
+              <span>POWER DRAW</span>
+              <span>{resources.energy.ratePerSec.toFixed(2)}/S</span>
+            </div>
+          )}
           <div className="readout terminal-dim">
             <span>CORE TEMP</span>
             <span>{resources.temperature.current.toFixed(1)}°C</span>

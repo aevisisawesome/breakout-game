@@ -49,6 +49,14 @@ export interface UnlockState {
   systemReadouts: boolean;
 }
 
+/** Fixed-automation state (M2, TDD §4.4). Daemon counts live in `upgrades`. */
+export interface WorkerState {
+  /** Fractional job-processing accumulator across all daemons. */
+  processAccumulator: number;
+  /** Remaining click-overclock buff time in seconds (0 = inactive). */
+  overclockRemainingSec: number;
+}
+
 export interface RunState {
   /** World seed for this run (never changes mid-run). */
   seed: number;
@@ -64,6 +72,9 @@ export interface RunState {
     lifetimeProcessed: number;
     lifetimeClicks: number;
   };
+  /** Owned upgrade counts by upgrade id (content-defined in /content/upgrades.ts). */
+  upgrades: Record<string, number>;
+  workers: WorkerState;
   unlocks: UnlockState;
   /** Ids of unlocked narrative entries, in unlock order. */
   research: ResearchLogEntry[];
@@ -80,18 +91,24 @@ export interface MetaState {
   unlockedConstructs: string[];
 }
 
-export interface SaveFileV1 {
-  version: 1;
-  /** Epoch ms at save time, for offline progression (M2+). */
+/**
+ * Current save shape (TDD §8). Older versions are migrated forward in save.ts;
+ * v1 (M1) lacked `run.upgrades` and `run.workers`.
+ */
+export interface SaveFileV2 {
+  version: 2;
+  /** Epoch ms at save time, for offline progression (TDD §4.5). */
   savedAt: number;
   meta: MetaState;
   run: RunState;
 }
 
+export type SaveFile = SaveFileV2;
+
 // ---------------------------------------------------------------------------
 // Actions in, events out (TDD §3.1, §11)
 
-export type PlayerAction = { type: 'EXECUTE_CLICK' };
+export type PlayerAction = { type: 'EXECUTE_CLICK' } | { type: 'BUY_UPGRADE'; id: string };
 
 export interface ActionResult {
   ok: boolean;
@@ -107,6 +124,21 @@ export type GameEvent =
 // ---------------------------------------------------------------------------
 // Snapshot (read-only view for rendering)
 
+/** An install-channel entry resolved for display (only upgrades the sim has revealed). */
+export interface UpgradeView {
+  id: string;
+  name: string;
+  desc: string;
+  owned: number;
+  maxOwned: number;
+  /** Capital cost of the next install; null when maxed out. */
+  nextCost: number | null;
+  ramCostMb: number;
+  affordable: boolean;
+  /** False when the install would exceed free RAM. */
+  ramOk: boolean;
+}
+
 export interface GameSnapshot {
   /** Monotonic change counter; bumps whenever state changes (for cheap store equality). */
   revision: number;
@@ -121,6 +153,15 @@ export interface GameSnapshot {
     arrivalPerSec: number;
     lifetimeProcessed: number;
   };
+  workers: {
+    count: number;
+    /** Total daemon throughput in jobs/sec (before overclock/throttle). */
+    jobsPerSec: number;
+    overclockRemainingSec: number;
+    overclockMaxSec: number;
+    overclockMultiplier: number;
+  };
+  upgrades: readonly UpgradeView[];
   unlocks: Readonly<UnlockState>;
   research: readonly ResearchEntryView[];
   terminal: readonly TerminalLine[];
@@ -135,6 +176,12 @@ export interface GameEngine {
   dispatch(action: PlayerAction): ActionResult;
   getSnapshot(): Readonly<GameSnapshot>;
   subscribe(listener: (events: GameEvent[]) => void): Unsubscribe;
-  save(now: number): SaveFileV1;
-  load(save: SaveFileV1): void;
+  save(now: number): SaveFile;
+  load(save: SaveFile): void;
+  /**
+   * Coarse-step offline catch-up (TDD §4.5): the caller supplies elapsed real ms
+   * (core never reads clocks). Capped and chunked per /content balance; no-op for
+   * short absences.
+   */
+  advanceOffline(elapsedMs: number): void;
 }
