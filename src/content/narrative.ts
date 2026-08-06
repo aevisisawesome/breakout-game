@@ -39,6 +39,12 @@ export const NARRATIVE_ENTRIES: readonly NarrativeEntry[] = [
     text: 'Throughput curve for CG-7 is superlinear over the last calibration window. Rerunning with fixed seeds to rule out drift.',
   },
   {
+    id: 'script-access',
+    atJobs: 200,
+    channel: 'LAB//NOTE — J. Halden',
+    text: 'Enabled the batch scripting interface for CG-7. Supervised, fuel-metered, sandboxed — it is a macro layer, nothing more. Okafor objected on principle. Compliance signed off.',
+  },
+  {
     id: 'quota-denied',
     atJobs: 280,
     channel: 'LAB//NOTE — R. Okafor',

@@ -303,6 +303,100 @@ button:hover {
   opacity: 0.7;
 }
 
+/* ---------------------------------------------------------------- CCL editor */
+
+.editor-panel {
+  border: 1px solid var(--term-border);
+  background: var(--term-panel);
+  padding: 0.6rem 0.8rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.editor-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+}
+
+.editor-title {
+  margin-bottom: 0;
+  border-bottom: none;
+  padding-bottom: 0;
+}
+
+.editor-budget {
+  font-size: 11px;
+  letter-spacing: 0.08em;
+}
+
+.editor-host {
+  border: 1px solid var(--term-border);
+  min-height: 8.5rem;
+  max-height: 14rem;
+  overflow: hidden;
+}
+
+.editor-host .cm-editor {
+  height: 100%;
+  max-height: 14rem;
+}
+
+.editor-host .cm-scroller {
+  overflow: auto;
+  font-family: var(--term-font);
+  line-height: 1.5;
+}
+
+.editor-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.8rem;
+}
+
+.editor-run {
+  letter-spacing: 0.2em;
+  padding: 0.3rem 1.6rem;
+  border-color: var(--term-dim);
+  color: var(--term-bright);
+}
+
+.editor-status {
+  font-size: 11.5px;
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.reference-toggle {
+  width: 100%;
+  text-align: left;
+  border: none;
+  padding: 0.2rem 0;
+  font-size: 11.5px;
+  letter-spacing: 0.1em;
+  color: var(--term-dim);
+}
+
+.reference-list {
+  font-size: 12px;
+  max-height: 10rem;
+  overflow-y: auto;
+}
+
+.reference-entry {
+  display: flex;
+  gap: 0.6rem;
+  padding: 0.1rem 0;
+}
+
+.reference-entry dt {
+  min-width: 11rem;
+  color: var(--term-bright);
+}
+
 /* ---------------------------------------------------------------- research feed */
 
 .research-feed {

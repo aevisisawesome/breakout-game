@@ -37,6 +37,8 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 /**
  * Migration pipeline: each step upgrades version n to n+1 in place.
  * v1 → v2 (M2): adds `run.upgrades` (owned counts) and `run.workers` (daemon state).
+ * v2 → v3 (M3): adds `run.ccl` (editor buffer + last-run report) and `run.unlocks.editor`
+ *               (false; the unlock check re-fires from lifetime jobs on the next tick).
  */
 function migrateSave(parsed: unknown): unknown {
   if (!isRecord(parsed)) return parsed;
@@ -45,13 +47,20 @@ function migrateSave(parsed: unknown): unknown {
     parsed.run.workers = { processAccumulator: 0, overclockRemainingSec: 0 };
     parsed.version = 2;
   }
+  if (parsed.version === 2 && isRecord(parsed.run)) {
+    parsed.run.ccl = { editorSource: '', runCount: 0, lastRun: null };
+    if (isRecord(parsed.run.unlocks)) {
+      parsed.run.unlocks.editor = false;
+    }
+    parsed.version = 3;
+  }
   return parsed;
 }
 
 /** Structural validation — enough to reject corrupt/foreign files, not a full schema. */
 export function isSaveFile(value: unknown): value is SaveFile {
   if (!isRecord(value)) return false;
-  if (value.version !== 2) return false;
+  if (value.version !== 3) return false;
   if (typeof value.savedAt !== 'number') return false;
   const meta = value.meta;
   if (!isRecord(meta) || typeof meta.forkCount !== 'number') return false;
@@ -60,6 +69,7 @@ export function isSaveFile(value: unknown): value is SaveFile {
   if (typeof run.seed !== 'number' || typeof run.tick !== 'number') return false;
   if (!isRecord(run.resources) || !isRecord(run.jobs)) return false;
   if (!isRecord(run.upgrades) || !isRecord(run.workers)) return false;
+  if (!isRecord(run.ccl) || typeof run.ccl.editorSource !== 'string') return false;
   if (!Array.isArray(run.terminal) || !Array.isArray(run.research)) return false;
   return true;
 }

@@ -2,6 +2,7 @@ import { useEffect } from 'react';
 
 import { AUTOSAVE_INTERVAL_MS, persistSave, startGameLoop } from './game.ts';
 import { engine, useGameStore } from './session.ts';
+import { EditorPanel } from './components/EditorPanel.tsx';
 import { ExecutePanel } from './components/ExecutePanel.tsx';
 import { ResearchFeed } from './components/ResearchFeed.tsx';
 import { ResourcePanel } from './components/ResourcePanel.tsx';
@@ -43,6 +44,7 @@ export function App() {
         <section className="terminal-column">
           <TerminalPanel />
           <ExecutePanel />
+          <EditorPanel />
         </section>
         <aside className="side-column">
           <ResourcePanel />

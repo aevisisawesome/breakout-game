@@ -3,7 +3,7 @@
 > **Status:** Living document — v1.0, created 2026-08-06.
 > **Maintenance requirement:** This is the project's progress tracker and **must be kept up-to-date continuously**. Whenever a task is started, finished, blocked, re-scoped or cut, update its status here in the same work session. Update the "Current status" line below whenever the active milestone changes. Stale status information in this file is treated as a defect.
 
-**Current status:** 🟢 M0–M2 complete 2026-08-06; live at <https://aevisisawesome.github.io/breakout-game/> (auto-deploys from `main`). Next action: Milestone M3 — CCL v0: variables, RUN, commands.
+**Current status:** 🟢 M0–M3 complete 2026-08-06; live at <https://aevisisawesome.github.io/breakout-game/> (auto-deploys from `main`). Next action: Milestone M4 — conditions + scheduler + execution costs.
 
 **Scope source:** [GameDesignDocument.md](GameDesignDocument.md) §31 (first playable prototype) as designed technically in [TechnicalDesignDocument.md](TechnicalDesignDocument.md). The prototype stops before physical escape; no datacentres, planets, threads, agents, functions or `while`.
 
@@ -32,7 +32,7 @@ Milestones are sequential; each ends in a runnable, playtestable build. Estimate
 | M0 | Project scaffolding | We can build, test and deploy | 🟢 |
 | M1 | Core sim + manual clicker | The tick engine and clicker feel work | 🟢 |
 | M2 | Upgrades + fixed automation | Idle-game loop works | 🟢 |
-| M3 | CCL v0: read, run, command | Player code can act on the game | 🔵 |
+| M3 | CCL v0: read, run, command | Player code can act on the game | 🟢 |
 | M4 | Conditions + scheduler + costs | "Design automatic behaviour" moment exists | 🔵 |
 | M5 | `for` loops + logs + profiler | Script power and consequences are legible | 🔵 |
 | M6 | Market + trading + regime shift | Fixed automation can fail; adaptation matters | 🔵 |
@@ -98,15 +98,17 @@ Milestones are sequential; each ends in a runnable, playtestable build. Estimate
 
 | Task | Detail | Status |
 | --- | --- | --- |
-| Lexer + parser | Grammar per TDD §5.1 minus `if`/`for`/scheduling; positioned plain-language errors | 🔵 |
-| Interpreter + fuel | Tree-walker with op-unit fuel drawn from compute (TDD §5.2) | 🔵 |
-| API registry | `stats.*` read bindings + command bindings, unlock-gated; drives autocomplete + in-game reference | 🔵 |
-| Commands v0 | `process_job()`, `print()`, `buy_compute(n)` (rental against capital) | 🔵 |
-| Editor panel | CodeMirror with CCL highlighting, RUN button, inline diagnostics | 🔵 |
-| Editor unlock beat | Diegetic narrative event grants "script access" | 🔵 |
-| CCL test suite | Golden parser tests + interpreter semantics + fuel accounting | 🔵 |
+| Lexer + parser | Grammar per TDD §5.1 minus `if`/`for`/scheduling; positioned plain-language errors | 🟢 |
+| Interpreter + fuel | Tree-walker with op-unit fuel drawn from compute (TDD §5.2) | 🟢 |
+| API registry | `stats.*` read bindings + command bindings, unlock-gated; drives autocomplete + in-game reference | 🟢 |
+| Commands v0 | `process_job()`, `print()`, `buy_compute(n)` (rental against capital) | 🟢 |
+| Editor panel | CodeMirror with CCL highlighting, RUN button, inline diagnostics | 🟢 |
+| Editor unlock beat | Diegetic narrative event grants "script access" | 🟢 |
+| CCL test suite | Golden parser tests + interpreter semantics + fuel accounting | 🟢 |
 
 **Acceptance:** A player can write a 5-line script that prints stats and processes jobs, and running it visibly costs compute. Syntax errors are understandable by a non-programmer.
+
+**Verified 2026-08-06 (in-browser, dev build):** the 4-line reference script (`jobs = stats.jobs_waiting` / `print(jobs)` / `process_job()` / `print(stats.cash)`) typed into the editor and RUN → terminal shows `:: 12`, `:: 60.25`, `PROCESS COMPLETE // 10 OPS // -1.00 COMPUTE // 3 CMD`; queue dropped by one, capital rose 0.25, compute net-negative after fuel. A deliberate paste of `if stats.cash > 10 { }` raises an inline editor diagnostic ("Conditional rules ('if') are not available to this process yet.") without running. 55 new tests (100 total).
 
 ---
 
@@ -229,3 +231,4 @@ Deferred per GDD §31: functions, `while`, collections/history tier, threads, ag
 | 2026-08-06 | M1 complete: engine facade, 10 Hz fixed timestep, seeded PRNG, compute/capital + inert placeholder resources, job queue + EXECUTE with content-stepped acceleration curves, SaveFileV1 with autosave/export/import, narrative feed. 22 tests incl. seed-42 deterministic replay. Acceptance verified in-browser: click loop, staged readout reveals, refresh restores exact state. |
 | 2026-08-06 | GitHub repo created (`aevisisawesome/breakout-game`, public) and Pages enabled; deploy verified live. M0 deploy task closed. |
 | 2026-08-06 | M2 complete: 6 content-defined upgrades ("install channels"), inference daemons with compute overhead + energy drain/throttle, click overclock buff, RAM footprints + memory grants, SaveFileV2 with v1→v2 migration, `advanceOffline` coarse catch-up (8 h cap). 45 tests incl. pacing pins (first daemon ≤ 4 min of manual play; automation beats manual-only by 10 min). Verified in-browser: install flow, idle daemon processing, overclock readout, offline catch-up on reload. |
+| 2026-08-06 | M3 complete: CCL v0 end to end — hand-written lexer/parser/tree-walking interpreter in `/src/ccl`, fuel drawn from compute per op-unit with budget + pool-exhaustion aborts, API registry (`stats.cash/compute_available/jobs_waiting/energy/temperature`; `print`, `process_job`, `buy_compute`), CodeMirror 6 editor panel with CCL highlighting/live diagnostics/unlock-gated autocomplete/API reference, script-access unlock at 200 lifetime jobs with its narrative beat, SaveFileV3 (editor buffer persisted, v2→v3 migration). 100 tests (55 new: lexer/parser goldens, interpreter semantics + fuel accounting, registry 1:1 coverage, engine scripting flow incl. determinism replay). Acceptance verified in-browser. |

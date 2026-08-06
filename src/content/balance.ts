@@ -67,6 +67,25 @@ export const BALANCE = {
     capitalPerJob: 0.25,
   },
 
+  ccl: {
+    /** Scripting interface (M3) unlocks at this lifetime processed-job count. */
+    unlockAtJobs: 200,
+    /** Compute drawn per interpreter op-unit (TDD §5.2 fuel). */
+    computePerOp: 0.05,
+    /** Per-activation op-unit budget; exceeding it preempts the process. */
+    maxOpsPerActivation: 200,
+    /** Editor/script source size cap in characters (sanity guard, not RAM — M4). */
+    maxSourceChars: 4000,
+    /** buy_compute(n): capital price per rented compute unit. */
+    computePricePerUnit: 0.2,
+    /** Listed compute cost per command invocation, on top of op fuel (TDD §5.1 tier 2). */
+    commandCosts: {
+      process_job: 0.5,
+      print: 0,
+      buy_compute: 0,
+    },
+  },
+
   save: {
     /** Terminal lines persisted in the save file (TDD §8 "log tail"). */
     terminalTailLines: 60,

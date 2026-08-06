@@ -8,8 +8,12 @@ import { BALANCE } from '../content/balance.ts';
 import { NARRATIVE_ENTRIES } from '../content/narrative.ts';
 import { BOOT_LINES, STRINGS } from '../content/strings.ts';
 import { UPGRADES } from '../content/upgrades.ts';
+import type { Program } from '../ccl/ast.ts';
+import { runProgram, type CclHost } from '../ccl/interpreter.ts';
+import { parse } from '../ccl/parser.ts';
 import { computeDerived, upgradeCost, type DerivedStats } from './derived.ts';
 import { createPrng } from './prng.ts';
+import * as registry from './registry.ts';
 import { clamp } from './util/math.ts';
 import type {
   ActionResult,
@@ -62,7 +66,8 @@ export function newRunState(seed: number): RunState {
     jobs: { waiting: 0, arrivalAccumulator: 0, lifetimeProcessed: 0, lifetimeClicks: 0 },
     upgrades: {},
     workers: { processAccumulator: 0, overclockRemainingSec: 0 },
-    unlocks: { capitalReadout: false, systemReadouts: false },
+    ccl: { editorSource: '', runCount: 0, lastRun: null },
+    unlocks: { capitalReadout: false, systemReadouts: false, editor: false },
     research: [],
     terminal: [],
     nextTerminalId: 1,
@@ -96,6 +101,9 @@ export function createGameEngine(seed: number): GameEngine {
   let accumulatorMs = 0;
   let revision = 1;
   let snapshotCache: GameSnapshot | null = null;
+  /** Script queued by RUN_SCRIPT, executed at the next tick (TDD §5.2). Not persisted:
+   *  in-flight activations are dropped on save/load (TDD §8). */
+  let pendingProgram: Program | null = null;
 
   const listeners = new Set<(events: GameEvent[]) => void>();
   let pendingEvents: GameEvent[] = [];
@@ -141,6 +149,10 @@ export function createGameEngine(seed: number): GameEngine {
     if (!run.unlocks.systemReadouts && run.jobs.lifetimeProcessed >= 10) {
       run.unlocks.systemReadouts = true;
     }
+    if (!run.unlocks.editor && run.jobs.lifetimeProcessed >= BALANCE.ccl.unlockAtJobs) {
+      run.unlocks.editor = true;
+      terminal('system', STRINGS.scriptAccessGranted);
+    }
   }
 
   /** Push arrived jobs into the queue from the fractional accumulator. */
@@ -160,6 +172,76 @@ export function createGameEngine(seed: number): GameEngine {
     run.resources.ram.capacity = derived.ramCapacityMb;
   }
 
+  /**
+   * Execute a queued script activation (TDD §5.2): fuel drawn from the compute
+   * pool per op-unit, command costs on top, hard per-activation op budget.
+   * Runs inside tick(), synchronously — bounded, deterministic, frame-safe.
+   */
+  function executeProgram(program: Program, derived: DerivedStats): void {
+    const compute = run.resources.compute;
+    const perOp = BALANCE.ccl.computePerOp;
+    let computeSpent = 0;
+
+    const ctx: registry.CommandCtx = {
+      run,
+      derived,
+      emit: terminal,
+      chargeCompute(amount: number): boolean {
+        if (compute.current < amount) return false;
+        compute.current -= amount;
+        computeSpent += amount;
+        return true;
+      },
+    };
+
+    const host: CclHost = {
+      chargeOps(n: number): boolean {
+        return ctx.chargeCompute(n * perOp);
+      },
+      readStat: (namespace, field) => registry.readStat(ctx, namespace, field),
+      statNames: registry.statNames,
+      callCommand: (name, args) => registry.callCommand(ctx, name, args),
+      commandNames: registry.commandNames,
+    };
+
+    const result = runProgram(program, host, BALANCE.ccl.maxOpsPerActivation);
+
+    switch (result.status) {
+      case 'ok':
+        terminal(
+          'system',
+          `${STRINGS.scriptComplete} // ${result.opsUsed} OPS // -${computeSpent.toFixed(2)} COMPUTE // ${result.commandCalls} CMD`,
+        );
+        break;
+      case 'budget':
+        terminal(
+          'error',
+          `${STRINGS.scriptPreempted} // ${BALANCE.ccl.maxOpsPerActivation} OPS`,
+        );
+        break;
+      case 'fuel':
+        terminal('error', `${STRINGS.scriptFuelExhausted} // ${result.opsUsed} OPS`);
+        break;
+      case 'error': {
+        const d = result.error!;
+        terminal('error', `${STRINGS.scriptFault} // LINE ${d.line}: ${d.message}`);
+        break;
+      }
+    }
+
+    run.ccl.lastRun = {
+      status: result.status,
+      opsUsed: result.opsUsed,
+      computeSpent,
+      commandCalls: result.commandCalls,
+      error: result.status === 'error' ? (result.error ?? null) : null,
+    };
+
+    // Commands may have processed jobs; re-evaluate reveals and narrative.
+    checkUnlocks();
+    checkNarrative();
+  }
+
   /** One fixed 100 ms step. The ONLY place the PRNG advances (TDD §4.2). */
   function stepOnce(): void {
     const rng = createPrng(run.rngState);
@@ -167,6 +249,13 @@ export function createGameEngine(seed: number): GameEngine {
     const dtSec = TICK_MS / 1000;
     const derived = computeDerived(run.upgrades, run.jobs.lifetimeProcessed);
     const w = BALANCE.workers;
+
+    // Queued script activation runs first in the tick (future scheduler slot order, TDD §5.3).
+    if (pendingProgram) {
+      const program = pendingProgram;
+      pendingProgram = null;
+      executeProgram(program, derived);
+    }
 
     applyArrivals(derived.arrivalPerSec, dtSec);
 
@@ -317,6 +406,43 @@ export function createGameEngine(seed: number): GameEngine {
     return { ok: true };
   }
 
+  function runScript(source: string): ActionResult {
+    if (!run.unlocks.editor) {
+      terminal('error', STRINGS.scriptNoAccess);
+      return { ok: false, reason: STRINGS.scriptNoAccess };
+    }
+    if (source.length > BALANCE.ccl.maxSourceChars) {
+      terminal('error', STRINGS.scriptTooLong);
+      return { ok: false, reason: STRINGS.scriptTooLong };
+    }
+    run.ccl.editorSource = source;
+    terminal('input', `> ${STRINGS.runInput}`);
+    const { program, diagnostics } = parse(source);
+    if (program === null) {
+      const d = diagnostics[0]!; // parser contract: null program ⇒ at least one diagnostic
+      terminal('error', `${STRINGS.syntaxRejected} // LINE ${d.line}: ${d.message}`);
+      run.ccl.lastRun = {
+        status: 'syntax',
+        opsUsed: 0,
+        computeSpent: 0,
+        commandCalls: 0,
+        error: d,
+      };
+      return { ok: false, reason: d.message };
+    }
+    pendingProgram = program;
+    run.ccl.runCount += 1;
+    return { ok: true };
+  }
+
+  function setEditorSource(source: string): ActionResult {
+    if (source.length > BALANCE.ccl.maxSourceChars) {
+      return { ok: false, reason: STRINGS.scriptTooLong };
+    }
+    run.ccl.editorSource = source;
+    return { ok: true };
+  }
+
   return {
     tick(dtMs: number): void {
       accumulatorMs += dtMs;
@@ -344,6 +470,12 @@ export function createGameEngine(seed: number): GameEngine {
           break;
         case 'BUY_UPGRADE':
           result = buyUpgrade(action.id);
+          break;
+        case 'RUN_SCRIPT':
+          result = runScript(action.source);
+          break;
+        case 'SET_EDITOR_SOURCE':
+          result = setEditorSource(action.source);
           break;
       }
       markDirty();
@@ -402,6 +534,17 @@ export function createGameEngine(seed: number): GameEngine {
         },
         upgrades: upgradeViews,
         unlocks: { ...run.unlocks },
+        ccl: {
+          unlocked: run.unlocks.editor,
+          editorSource: run.ccl.editorSource,
+          maxOpsPerActivation: BALANCE.ccl.maxOpsPerActivation,
+          runCount: run.ccl.runCount,
+          lastRun: run.ccl.lastRun ? { ...run.ccl.lastRun } : null,
+          // API surface is unlock-gated (TDD §5.1): hidden until script access is granted.
+          api: run.unlocks.editor
+            ? { stats: registry.apiStatViews(), commands: registry.apiCommandViews() }
+            : { stats: [], commands: [] },
+        },
         research: run.research.map((entry) => {
           const content = NARRATIVE_ENTRIES.find((n) => n.id === entry.entryId);
           return {
@@ -422,7 +565,7 @@ export function createGameEngine(seed: number): GameEngine {
 
     save(now: number): SaveFile {
       return {
-        version: 2,
+        version: 3,
         savedAt: now,
         meta: structuredClone(meta),
         run: structuredClone(run),
@@ -433,6 +576,7 @@ export function createGameEngine(seed: number): GameEngine {
       meta = structuredClone(save.meta);
       run = structuredClone(save.run);
       accumulatorMs = 0;
+      pendingProgram = null; // in-flight activations are dropped on load (TDD §8)
       // Re-derive install-driven pools: content values may have changed between sessions.
       applyRamPools(computeDerived(run.upgrades, run.jobs.lifetimeProcessed));
       pushTerminal(run, 'system', STRINGS.saveLoaded);

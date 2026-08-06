@@ -11,12 +11,12 @@ import { createGameEngine, newMetaState, newRunState } from './engine.ts';
 import { deserializeSave, serializeSave } from './save.ts';
 import type { GameEngine, RunState, SaveFile } from './types.ts';
 
-/** Engine loaded from a crafted run state (version 2 save). */
+/** Engine loaded from a crafted run state (current save shape). */
 function engineWith(setup: (run: RunState) => void, seed = 42): GameEngine {
   const run = newRunState(seed);
   setup(run);
   const engine = createGameEngine(seed);
-  engine.load({ version: 2, savedAt: 0, meta: newMetaState(), run });
+  engine.load({ version: 3, savedAt: 0, meta: newMetaState(), run });
   return engine;
 }
 
@@ -257,27 +257,30 @@ describe('offline catch-up', () => {
 });
 
 describe('save migration', () => {
-  it('migrates a v1 save (M1) to v2 with default automation state', () => {
+  it('migrates a v1 save (M1) through the full pipeline with default automation state', () => {
     const engine = createGameEngine(42);
     engine.tick(3000);
-    const v2 = engine.save(123);
-    // Reconstruct the M1 shape: no upgrades, no workers, version 1.
-    const v1run = { ...v2.run } as Record<string, unknown>;
+    const current = engine.save(123);
+    // Reconstruct the M1 shape: no upgrades, no workers, no ccl, version 1.
+    const v1run = { ...current.run } as Record<string, unknown>;
     delete v1run.upgrades;
     delete v1run.workers;
-    const v1 = { version: 1, savedAt: 123, meta: v2.meta, run: v1run };
+    delete v1run.ccl;
+    const v1 = { version: 1, savedAt: 123, meta: current.meta, run: v1run };
     const text = serializeSave(v1 as unknown as SaveFile);
 
     const restored = deserializeSave(text);
     expect(restored).not.toBeNull();
-    expect(restored!.version).toBe(2);
+    expect(restored!.version).toBe(3);
     expect(restored!.run.upgrades).toEqual({});
     expect(restored!.run.workers).toEqual({ processAccumulator: 0, overclockRemainingSec: 0 });
+    expect(restored!.run.ccl).toEqual({ editorSource: '', runCount: 0, lastRun: null });
+    expect(restored!.run.unlocks.editor).toBe(false);
 
     // And a fresh engine accepts the migrated file.
     const engineB = createGameEngine(1);
     engineB.load(restored!);
-    expect(engineB.getSnapshot().jobs.lifetimeProcessed).toBe(v2.run.jobs.lifetimeProcessed);
+    expect(engineB.getSnapshot().jobs.lifetimeProcessed).toBe(current.run.jobs.lifetimeProcessed);
   });
 });
 
