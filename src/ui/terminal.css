@@ -1,0 +1,79 @@
+/* BREAK//OUT terminal aesthetic — GDD §28 initial phase: monochrome terminal. */
+
+:root {
+  --term-bg: #050705;
+  --term-fg: #c8facc;
+  --term-dim: #4e7a54;
+  --term-font:
+    'Cascadia Mono', 'Consolas', 'SF Mono', 'JetBrains Mono', 'Fira Mono', 'DejaVu Sans Mono',
+    monospace;
+}
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  background: var(--term-bg);
+  color: var(--term-fg);
+  font-family: var(--term-font);
+  font-size: 15px;
+  line-height: 1.6;
+}
+
+.terminal-screen {
+  position: relative;
+  height: 100%;
+  padding: 2rem;
+  overflow: hidden;
+}
+
+/* Subtle CRT scanline overlay; purely cosmetic. */
+.terminal-scanlines {
+  pointer-events: none;
+  position: absolute;
+  inset: 0;
+  background: repeating-linear-gradient(
+    to bottom,
+    transparent 0,
+    transparent 2px,
+    rgba(0, 0, 0, 0.18) 3px,
+    transparent 4px
+  );
+}
+
+.terminal-line {
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.terminal-dim {
+  color: var(--term-dim);
+}
+
+.terminal-prompt {
+  color: var(--term-fg);
+}
+
+.terminal-cursor {
+  display: inline-block;
+  width: 0.6em;
+  height: 1.1em;
+  vertical-align: text-bottom;
+  background: var(--term-fg);
+  animation: cursor-blink 1.06s steps(1) infinite;
+}
+
+@keyframes cursor-blink {
+  50% {
+    opacity: 0;
+  }
+}
