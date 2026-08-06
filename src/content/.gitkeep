@@ -1,2 +1,0 @@
-# /src/content — plain typed data: upgrades, jobs, market config, narrative entries (TDD §3).
-# All balance numbers live here, never in /core (TDD §11). First code lands in M1.
