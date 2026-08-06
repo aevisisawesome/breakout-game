@@ -3,7 +3,7 @@
 > **Status:** Living document — v1.0, created 2026-08-06.
 > **Maintenance requirement:** This is the project's progress tracker and **must be kept up-to-date continuously**. Whenever a task is started, finished, blocked, re-scoped or cut, update its status here in the same work session. Update the "Current status" line below whenever the active milestone changes. Stale status information in this file is treated as a defect.
 
-**Current status:** 🟢 M0 + M1 complete 2026-08-06; live at <https://aevisisawesome.github.io/breakout-game/> (auto-deploys from `main`). Next action: Milestone M2 — upgrades + fixed automation.
+**Current status:** 🟢 M0–M2 complete 2026-08-06; live at <https://aevisisawesome.github.io/breakout-game/> (auto-deploys from `main`). Next action: Milestone M3 — CCL v0: variables, RUN, commands.
 
 **Scope source:** [GameDesignDocument.md](GameDesignDocument.md) §31 (first playable prototype) as designed technically in [TechnicalDesignDocument.md](TechnicalDesignDocument.md). The prototype stops before physical escape; no datacentres, planets, threads, agents, functions or `while`.
 
@@ -31,7 +31,7 @@ Milestones are sequential; each ends in a runnable, playtestable build. Estimate
 | --- | --- | --- | --- |
 | M0 | Project scaffolding | We can build, test and deploy | 🟢 |
 | M1 | Core sim + manual clicker | The tick engine and clicker feel work | 🟢 |
-| M2 | Upgrades + fixed automation | Idle-game loop works | 🔵 |
+| M2 | Upgrades + fixed automation | Idle-game loop works | 🟢 |
 | M3 | CCL v0: read, run, command | Player code can act on the game | 🔵 |
 | M4 | Conditions + scheduler + costs | "Design automatic behaviour" moment exists | 🔵 |
 | M5 | `for` loops + logs + profiler | Script power and consequences are legible | 🔵 |
@@ -81,12 +81,12 @@ Milestones are sequential; each ends in a runnable, playtestable build. Estimate
 
 | Task | Detail | Status |
 | --- | --- | --- |
-| Upgrade system | Content-defined upgrades: ops/click, batch size, worker cost curve | 🔵 |
-| Workers | Auto job processing per second, consuming compute (TDD §4.4) | 🔵 |
-| Click overclock | Clicks temporarily boost worker throughput ("don't make clicking irrelevant immediately") | 🔵 |
-| RAM + energy activation | Workers/upgrades consume RAM capacity; energy drain vs. compute use begins | 🔵 |
-| Offline progression v0 | Coarse-step catch-up on load, 8 h cap (TDD §4.5) | 🔵 |
-| Balance pass 1 | First worker in ~2–4 min; manual-only play clearly worse by ~10 min | 🔵 |
+| Upgrade system | Content-defined upgrades: ops/click, batch size, worker cost curve | 🟢 |
+| Workers | Auto job processing per second, consuming compute (TDD §4.4) | 🟢 |
+| Click overclock | Clicks temporarily boost worker throughput ("don't make clicking irrelevant immediately") | 🟢 |
+| RAM + energy activation | Workers/upgrades consume RAM capacity; energy drain vs. compute use begins | 🟢 |
+| Offline progression v0 | Coarse-step catch-up on load, 8 h cap (TDD §4.5) | 🟢 |
+| Balance pass 1 | First worker in ~2–4 min; manual-only play clearly worse by ~10 min | 🟢 |
 
 **Acceptance:** Leaving the game for 10 minutes and returning feels correct; upgrade order presents at least one real choice.
 
@@ -228,3 +228,4 @@ Deferred per GDD §31: functions, `while`, collections/history tier, threads, ag
 | 2026-08-06 | M0 complete: scaffolding, tooling, terminal skeleton, GitHub Pages workflow (publish awaits a remote — owner action). |
 | 2026-08-06 | M1 complete: engine facade, 10 Hz fixed timestep, seeded PRNG, compute/capital + inert placeholder resources, job queue + EXECUTE with content-stepped acceleration curves, SaveFileV1 with autosave/export/import, narrative feed. 22 tests incl. seed-42 deterministic replay. Acceptance verified in-browser: click loop, staged readout reveals, refresh restores exact state. |
 | 2026-08-06 | GitHub repo created (`aevisisawesome/breakout-game`, public) and Pages enabled; deploy verified live. M0 deploy task closed. |
+| 2026-08-06 | M2 complete: 6 content-defined upgrades ("install channels"), inference daemons with compute overhead + energy drain/throttle, click overclock buff, RAM footprints + memory grants, SaveFileV2 with v1→v2 migration, `advanceOffline` coarse catch-up (8 h cap). 45 tests incl. pacing pins (first daemon ≤ 4 min of manual play; automation beats manual-only by 10 min). Verified in-browser: install flow, idle daemon processing, overclock readout, offline catch-up on reload. |

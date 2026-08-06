@@ -65,8 +65,9 @@ interface GameEngine {
   dispatch(action: PlayerAction): ActionResult; // clicks, purchases, script ops
   getSnapshot(): Readonly<GameSnapshot>;     // immutable view for rendering
   subscribe(listener: (events: GameEvent[]) => void): Unsubscribe;
-  save(now: number): SaveFileV1;             // caller supplies epoch ms — core never reads the clock
-  load(save: SaveFileV1): void;
+  save(now: number): SaveFile;               // caller supplies epoch ms — core never reads the clock
+  load(save: SaveFile): void;
+  advanceOffline(elapsedMs: number): void;   // coarse offline catch-up (§4.5); caller supplies elapsed ms
 }
 ```
 
@@ -195,8 +196,8 @@ All modes produce CCL source; the engine only ever sees CCL text.
 ## 8. Save system
 
 ```ts
-interface SaveFileV1 {
-  version: 1;
+interface SaveFileV2 {           // current shape; v1 (M1) lacked run.upgrades/run.workers
+  version: 2;
   savedAt: number;          // epoch ms, for offline progression
   meta: MetaState;          // prestige-persistent: unlocks, architecture points, fork count
   run: RunState;            // seed, resources, upgrades, deployed script sources, market state, log tail
@@ -264,3 +265,10 @@ Record every significant technical decision or reversal here. Keep entries appen
 | 2026-08-06 | Snapshots resolve state-gated content for display (e.g. research entry text); /ui may import only static display data from /content (e.g. the diegetic string table), never state-dependent content. | Keeps the "UI talks to core only through the facade" rule meaningful: the sim decides what is unlocked; the UI never evaluates content triggers. |
 | 2026-08-06 | UI store is Zustand mirroring `getSnapshot()`; it re-syncs on rAF frames **and** on engine event flushes. | Dispatch results must render even when rAF is throttled (hidden/background tabs). Store holds no game state of its own. |
 | 2026-08-06 | Vitest 4 (TDD table said "Vitest" generically). Dev-only `window.__breakout = { engine }` handle exposed under `import.meta.env.DEV`. | Vitest 2/3 pulled an esbuild advisory via bundled vite 5; v4 clears `npm audit`. The dev handle enables scripted playtesting/debugging; stripped from production builds. |
+| 2026-08-06 | M2 worker economics: inference daemons process the same job queue as clicks (jobs still pay `computePerJob` + `capitalPerJob`) but each daemon-processed job draws a compute **overhead** from the buffer (net compute stays positive). Daemons stall if the buffer can't cover one job's overhead. | §4.3's "compute produced by hardware" model arrives with rented hardware (M3+). For M2, overhead-on-the-click-earned buffer keeps clicking mechanically relevant (daemons need seed compute) without inverting M1's terminal messaging. Growth is bounded by the job arrival rate, which upgrades raise. |
+| 2026-08-06 | M2 energy model: constant base regen ("sandbox power feed") + upgrade adds; drain per daemon-second while the queue is non-empty, scaled by the current throughput multiplier; an empty pool throttles daemon throughput by a content factor (0.25) rather than halting. The resulting full/throttled oscillation around empty is accepted. | Prefigures M6 energy trading with a soft failure mode. The bang-bang oscillation is deliberate groundwork for GDD §6 "feedback instability" teaching; a smooth controller would hide the phenomenon. |
+| 2026-08-06 | Click overclock is a capped timer (each EXECUTE +1.5 s, max 12 s) that multiplies daemon throughput ×2 while active. | GDD Phase 1 rule "don't make clicking irrelevant immediately": clicking layers onto automation instead of competing with it. Numbers in `/content`. |
+| 2026-08-06 | Upgrades are content-defined "install channels" with geometric cost curves, per-install RAM footprints, `maxOwned` caps and job-count reveal gates; effects are a discriminated union interpreted in `/core/derived.ts` (pure derived-stats recomputation per tick). RAM `current` measures installed footprints against a capacity raised by memory-grant upgrades. | TDD §11 (no balance in core) and §9 (the sim decides what's revealed — snapshot lists only unlocked upgrades). Derived-stat recomputation avoids stored/duplicated aggregates in RunState. |
+| 2026-08-06 | Save bumped to `SaveFileV2` (adds `run.upgrades`, `run.workers`); `deserializeSave` runs a v1→v2 migration filling defaults. `engine.load` re-derives RAM pools so content changes between sessions can't leave stale capacities in saves. | TDD §8 migration pipeline, first real use. Live playtest saves from M1 keep working. |
+| 2026-08-06 | Offline catch-up is `engine.advanceOffline(elapsedMs)` — a facade addition; the UI calls it after `load` with `Date.now() − savedAt`. Coarse 60 s chunks: arrivals and daemon processing are treated as concurrent (queue cap applies to the residual only), energy is a steady-state budget (full-rate seconds, then throttled), no overclock, no PRNG draws. Absences < 60 s are ignored; cap 8 h. | §4.5 as designed; the caller-supplies-time rule keeps /core clock-free. Applying the queue cap before processing would wrongly cap offline throughput at (queue capacity)/(chunk length) jobs/s. |
+| 2026-08-06 | Vite dev server honors an externally assigned `PORT` env var (`server.port` in vite.config.ts); `.claude/launch.json` sets `autoPort`. | Lets multiple dev sessions coexist without fighting over 5173. No effect on builds. |
