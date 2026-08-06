@@ -3,7 +3,7 @@
 > **Status:** Living document — v1.0, created 2026-08-06.
 > **Maintenance requirement:** This is the project's progress tracker and **must be kept up-to-date continuously**. Whenever a task is started, finished, blocked, re-scoped or cut, update its status here in the same work session. Update the "Current status" line below whenever the active milestone changes. Stale status information in this file is treated as a defect.
 
-**Current status:** 🟢 M1 complete 2026-08-06 (M0 same day; deploy workflow ready, publishing awaits a GitHub remote). Next action: Milestone M2 — upgrades + fixed automation.
+**Current status:** 🟢 M0 + M1 complete 2026-08-06; live at <https://aevisisawesome.github.io/breakout-game/> (auto-deploys from `main`). Next action: Milestone M2 — upgrades + fixed automation.
 
 **Scope source:** [GameDesignDocument.md](GameDesignDocument.md) §31 (first playable prototype) as designed technically in [TechnicalDesignDocument.md](TechnicalDesignDocument.md). The prototype stops before physical escape; no datacentres, planets, threads, agents, functions or `while`.
 
@@ -51,7 +51,7 @@ Milestones are sequential; each ends in a runnable, playtestable build. Estimate
 | Vite + React + TS strict | Folder layout `/src/core`, `/src/ccl`, `/src/ui`, `/src/content` per TDD §3 | 🟢 |
 | Tooling | ESLint (incl. `Math.random` ban in core/ccl), Prettier, Vitest wired up | 🟢 |
 | Skeleton page | Black terminal screen, blinking cursor, version string | 🟢 |
-| Deploy path | GitHub Pages workflow (`.github/workflows/deploy.yml`, build + test on push to `main`); build uses relative base so any static host works. **Publishing awaits a GitHub remote + Pages enablement (owner action).** | 🟡 |
+| Deploy path | GitHub Pages via Actions: <https://github.com/aevisisawesome/breakout-game> auto-deploys `main` to <https://aevisisawesome.github.io/breakout-game/> (build + test gate). | 🟢 |
 
 **Acceptance:** `npm run dev`, `npm test`, `npm run build` all work; deployed URL loads the skeleton.
 
@@ -227,3 +227,4 @@ Deferred per GDD §31: functions, `while`, collections/history tier, threads, ag
 | 2026-08-06 | v1.0 — initial plan created. |
 | 2026-08-06 | M0 complete: scaffolding, tooling, terminal skeleton, GitHub Pages workflow (publish awaits a remote — owner action). |
 | 2026-08-06 | M1 complete: engine facade, 10 Hz fixed timestep, seeded PRNG, compute/capital + inert placeholder resources, job queue + EXECUTE with content-stepped acceleration curves, SaveFileV1 with autosave/export/import, narrative feed. 22 tests incl. seed-42 deterministic replay. Acceptance verified in-browser: click loop, staged readout reveals, refresh restores exact state. |
+| 2026-08-06 | GitHub repo created (`aevisisawesome/breakout-game`, public) and Pages enabled; deploy verified live. M0 deploy task closed. |
