@@ -28,6 +28,11 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm test
+      # Formatting and lint are blocking gates on the deploy (TDD Decision Log, 2026-08-07):
+      # repo-wide Prettier drift accumulated unnoticed because CI never checked it. A trivial
+      # formatting slip now blocks a playtest deploy; the fix is to run `npm run format`.
+      - run: npm run format:check
+      - run: npm run lint
       - run: npm run build
       - uses: actions/upload-pages-artifact@v3
         with:
