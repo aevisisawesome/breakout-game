@@ -13,7 +13,8 @@ export type UpgradeEffect =
   | { readonly kind: 'arrivalMult'; readonly factor: number }
   | { readonly kind: 'workerRateMult'; readonly factor: number }
   | { readonly kind: 'ramCapacityAdd'; readonly mb: number }
-  | { readonly kind: 'energyRegenAdd'; readonly perSec: number };
+  | { readonly kind: 'energyRegenAdd'; readonly perSec: number }
+  | { readonly kind: 'schedulerSlotAdd'; readonly slots: number };
 
 export interface UpgradeDef {
   readonly id: string;
@@ -99,5 +100,16 @@ export const UPGRADES: readonly UpgradeDef[] = [
     ramCostMb: 24,
     unlockAtJobs: 150,
     effect: { kind: 'workerRateMult', factor: 1.4 },
+  },
+  {
+    id: 'process-table',
+    name: 'PROCESS TABLE EXTENSION',
+    desc: '+1 SCHEDULER SLOT FOR DEPLOYED PROCESSES',
+    costBase: 140,
+    costGrowth: 2.4,
+    maxOwned: 3,
+    ramCostMb: 8,
+    unlockAtJobs: 480,
+    effect: { kind: 'schedulerSlotAdd', slots: 1 },
   },
 ];

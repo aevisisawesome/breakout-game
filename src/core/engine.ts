@@ -5,23 +5,32 @@
  */
 
 import { BALANCE } from '../content/balance.ts';
-import { NARRATIVE_ENTRIES } from '../content/narrative.ts';
+import { NARRATIVE_ENTRIES, type NarrativeFlagId } from '../content/narrative.ts';
 import { BOOT_LINES, STRINGS } from '../content/strings.ts';
 import { UPGRADES } from '../content/upgrades.ts';
-import type { Program } from '../ccl/ast.ts';
-import { runProgram, type CclHost } from '../ccl/interpreter.ts';
-import { parse } from '../ccl/parser.ts';
+import type { Program, ScheduledProcess, Stmt } from '../ccl/ast.ts';
+import {
+  evalCondition,
+  runStatements,
+  type CclHost,
+  type CclRunResult,
+} from '../ccl/interpreter.ts';
+import { parse, type ParseOptions } from '../ccl/parser.ts';
 import { computeDerived, upgradeCost, type DerivedStats } from './derived.ts';
 import { createPrng } from './prng.ts';
 import * as registry from './registry.ts';
+import { intervalTicks, intervalsAllowed, newProcessRuntime, scriptRamMb } from './scheduler.ts';
 import { clamp } from './util/math.ts';
 import type {
   ActionResult,
+  DeploymentView,
   GameEngine,
   GameEvent,
   GameSnapshot,
   MetaState,
   PlayerAction,
+  ProcessRuntime,
+  ProcessView,
   ResourcePool,
   RunState,
   SaveFile,
@@ -67,7 +76,15 @@ export function newRunState(seed: number): RunState {
     upgrades: {},
     workers: { processAccumulator: 0, overclockRemainingSec: 0 },
     ccl: { editorSource: '', runCount: 0, lastRun: null },
-    unlocks: { capitalReadout: false, systemReadouts: false, editor: false },
+    scheduler: { deployments: [], nextId: 1 },
+    unlocks: {
+      capitalReadout: false,
+      systemReadouts: false,
+      editor: false,
+      conditions: false,
+      scheduler: false,
+    },
+    flags: [],
     research: [],
     terminal: [],
     nextTerminalId: 1,
@@ -104,6 +121,9 @@ export function createGameEngine(seed: number): GameEngine {
   /** Script queued by RUN_SCRIPT, executed at the next tick (TDD §5.2). Not persisted:
    *  in-flight activations are dropped on save/load (TDD §8). */
   let pendingProgram: Program | null = null;
+  /** Compiled ASTs of the deployed scripts, keyed by deployment id. Never persisted —
+   *  saves hold source text only, recompiled on load (TDD §8). */
+  let compiled = new Map<string, readonly ScheduledProcess[]>();
 
   const listeners = new Set<(events: GameEvent[]) => void>();
   let pendingEvents: GameEvent[] = [];
@@ -130,10 +150,11 @@ export function createGameEngine(seed: number): GameEngine {
     emit({ type: 'TERMINAL_LINE', line: pushTerminal(run, kind, text) });
   }
 
-  /** Unlock any narrative entries whose job threshold has been reached. */
+  /** Unlock any narrative entries whose job threshold (and milestone flag) is satisfied. */
   function checkNarrative(): void {
     for (const entry of NARRATIVE_ENTRIES) {
       if (run.jobs.lifetimeProcessed < entry.atJobs) continue;
+      if (entry.requiresFlag !== undefined && !run.flags.includes(entry.requiresFlag)) continue;
       if (run.research.some((r) => r.entryId === entry.id)) continue;
       run.research.push({ entryId: entry.id, atTick: run.tick });
       terminal('system', STRINGS.researchIntercept);
@@ -153,6 +174,27 @@ export function createGameEngine(seed: number): GameEngine {
       run.unlocks.editor = true;
       terminal('system', STRINGS.scriptAccessGranted);
     }
+    if (
+      !run.unlocks.conditions &&
+      run.jobs.lifetimeProcessed >= BALANCE.ccl.conditionsUnlockAtJobs
+    ) {
+      run.unlocks.conditions = true;
+      terminal('system', STRINGS.conditionsGranted);
+    }
+    if (!run.unlocks.scheduler && run.jobs.lifetimeProcessed >= BALANCE.ccl.schedulerUnlockAtJobs) {
+      run.unlocks.scheduler = true;
+      terminal('system', STRINGS.schedulerGranted);
+    }
+  }
+
+  /** Language tiers currently available to the parser (M4: unlock-gated grammar). */
+  function parseOptions(): ParseOptions {
+    return { conditions: run.unlocks.conditions, scheduling: run.unlocks.scheduler };
+  }
+
+  /** Set a narrative milestone flag; unlocking its entry is left to checkNarrative. */
+  function setFlag(flag: NarrativeFlagId): void {
+    if (!run.flags.includes(flag)) run.flags.push(flag);
   }
 
   /** Push arrived jobs into the queue from the fractional accumulator. */
@@ -166,18 +208,30 @@ export function createGameEngine(seed: number): GameEngine {
     }
   }
 
-  /** Reflect install footprints/capacity into the RAM pool (M2: RAM measures installs). */
+  /** RAM occupied by deployed scripts (TDD §4.3), on top of install footprints. */
+  function deployedRamMb(): number {
+    return run.scheduler.deployments.reduce((total, dep) => total + dep.ramMb, 0);
+  }
+
+  /** Reflect install footprints + deployed scripts into the RAM pool. */
   function applyRamPools(derived: DerivedStats): void {
-    run.resources.ram.current = derived.ramUsedMb;
+    run.resources.ram.current = derived.ramUsedMb + deployedRamMb();
     run.resources.ram.capacity = derived.ramCapacityMb;
   }
 
+  /** Outcome of one activation, with the compute actually drawn for it. */
+  interface Activation extends CclRunResult {
+    computeSpent: number;
+  }
+
   /**
-   * Execute a queued script activation (TDD §5.2): fuel drawn from the compute
-   * pool per op-unit, command costs on top, hard per-activation op budget.
-   * Runs inside tick(), synchronously — bounded, deterministic, frame-safe.
+   * Build the interpreter host for one activation (TDD §5.2): fuel drawn from
+   * the compute pool per op-unit, command costs on top. `verbose` is false for
+   * scheduled processes, which would otherwise flood the terminal every tick —
+   * only `print()` output (a 'result' line) survives; failures are counted in
+   * the process monitor instead.
    */
-  function executeProgram(program: Program, derived: DerivedStats): void {
+  function makeHost(derived: DerivedStats, verbose: boolean) {
     const compute = run.resources.compute;
     const perOp = BALANCE.ccl.computePerOp;
     let computeSpent = 0;
@@ -185,7 +239,9 @@ export function createGameEngine(seed: number): GameEngine {
     const ctx: registry.CommandCtx = {
       run,
       derived,
-      emit: terminal,
+      emit(kind: TerminalLineKind, text: string): void {
+        if (verbose || kind === 'result') terminal(kind, text);
+      },
       chargeCompute(amount: number): boolean {
         if (compute.current < amount) return false;
         compute.current -= amount;
@@ -204,7 +260,37 @@ export function createGameEngine(seed: number): GameEngine {
       commandNames: registry.commandNames,
     };
 
-    const result = runProgram(program, host, BALANCE.ccl.maxOpsPerActivation);
+    return { host, spent: () => computeSpent };
+  }
+
+  /** Run a statement body as one activation. */
+  function runActivation(
+    body: readonly Stmt[],
+    derived: DerivedStats,
+    verbose: boolean,
+  ): Activation {
+    const { host, spent } = makeHost(derived, verbose);
+    const result = runStatements(body, host, BALANCE.ccl.maxOpsPerActivation);
+    return { ...result, computeSpent: spent() };
+  }
+
+  /** Sample a `when` guard. Fuel-metered exactly like a body (TDD §5.3). */
+  function runGuard(
+    process: Extract<ScheduledProcess, { kind: 'when' }>,
+    derived: DerivedStats,
+  ): Activation & { value: boolean } {
+    const { host, spent } = makeHost(derived, false);
+    const result = evalCondition(process.cond, host, BALANCE.ccl.maxOpsPerActivation);
+    return { ...result, computeSpent: spent() };
+  }
+
+  /**
+   * Execute a queued RUN activation: same fuel rules as any process, but it
+   * reports to the terminal and updates the editor's last-run readout.
+   */
+  function executeProgram(program: Program, derived: DerivedStats): void {
+    const result = runActivation(program.statements, derived, true);
+    const computeSpent = result.computeSpent;
 
     switch (result.status) {
       case 'ok':
@@ -239,6 +325,99 @@ export function createGameEngine(seed: number): GameEngine {
     checkNarrative();
   }
 
+  /** Fold an activation's result into a deployed process's monitor counters. */
+  function recordActivation(runtime: ProcessRuntime, result: Activation, counted: boolean): void {
+    runtime.opsTotal += result.opsUsed;
+    runtime.computeTotal += result.computeSpent;
+    runtime.failures += result.commandFailures;
+    if (counted) {
+      runtime.activations += 1;
+      runtime.lastRunTick = run.tick;
+    }
+    runtime.lastStatus = result.status;
+    if (result.status !== 'ok') runtime.aborts += 1;
+    runtime.lastError = result.error?.message ?? null;
+  }
+
+  /**
+   * Run every due scheduled process, in slot order (TDD §5.3). `every` processes
+   * fire on their interval; `when` guards are sampled on the balance-defined
+   * cadence and fire on a false→true edge, so a standing condition cannot
+   * re-trigger for free.
+   */
+  function stepScheduler(derived: DerivedStats): void {
+    const s = BALANCE.scheduler;
+    for (const deployment of run.scheduler.deployments) {
+      const processes = compiled.get(deployment.id);
+      if (!processes) continue;
+      for (let i = 0; i < processes.length; i++) {
+        const process = processes[i]!; // compiled and runtime arrays are index-aligned
+        const runtime = deployment.processes[i];
+        if (!runtime) continue;
+
+        if (process.kind === 'every') {
+          if (run.tick < runtime.nextDueTick) continue;
+          runtime.nextDueTick = run.tick + intervalTicks(process, TICKS_PER_SEC);
+          recordActivation(runtime, runActivation(process.body, derived, false), true);
+          continue;
+        }
+
+        if (run.tick % s.whenPollTicks !== 0) continue;
+        const guard = runGuard(process, derived);
+        recordActivation(runtime, guard, false);
+        if (guard.status !== 'ok') continue; // a guard that cannot run leaves the edge alone
+        const rising = guard.value && !runtime.lastCondition;
+        runtime.lastCondition = guard.value;
+        if (rising) {
+          recordActivation(runtime, runActivation(process.body, derived, false), true);
+        }
+      }
+    }
+  }
+
+  /**
+   * Offline safe mode (TDD §4.5): inside one catch-up chunk, each `every`
+   * process runs its due number of activations, bounded per chunk and across
+   * the whole catch-up. `when` guards do not run — an edge-triggered condition
+   * has no meaning against coarse summary steps, so those processes simply
+   * resume when the player returns. Returns the activations performed.
+   */
+  function runOfflineProcesses(
+    chunkSec: number,
+    derived: DerivedStats,
+    activationsSoFar: number,
+  ): number {
+    const s = BALANCE.scheduler;
+    if (run.scheduler.deployments.length === 0) return 0;
+    let performed = 0;
+
+    for (const deployment of run.scheduler.deployments) {
+      const processes = compiled.get(deployment.id);
+      if (!processes) continue;
+      for (let i = 0; i < processes.length; i++) {
+        const process = processes[i]!; // index-aligned with the runtime array
+        const runtime = deployment.processes[i];
+        if (!runtime || process.kind !== 'every') continue;
+
+        const intervalSec = intervalTicks(process, TICKS_PER_SEC) / TICKS_PER_SEC;
+        const budget = s.offlineMaxActivations - activationsSoFar - performed;
+        const times = Math.min(
+          Math.floor(chunkSec / intervalSec),
+          s.offlineMaxActivationsPerChunk,
+          Math.max(0, budget),
+        );
+        for (let n = 0; n < times; n++) {
+          const result = runActivation(process.body, derived, false);
+          recordActivation(runtime, result, true);
+          performed += 1;
+          // Stop the moment the process can no longer pay for itself.
+          if (result.status === 'fuel') break;
+        }
+      }
+    }
+    return performed;
+  }
+
   /** One fixed 100 ms step. The ONLY place the PRNG advances (TDD §4.2). */
   function stepOnce(): void {
     const rng = createPrng(run.rngState);
@@ -247,11 +426,20 @@ export function createGameEngine(seed: number): GameEngine {
     const derived = computeDerived(run.upgrades, run.jobs.lifetimeProcessed);
     const w = BALANCE.workers;
 
-    // Queued script activation runs first in the tick (future scheduler slot order, TDD §5.3).
+    // Script activations run first in the tick: the queued RUN press, then the
+    // deployed processes in slot order (TDD §5.3).
     if (pendingProgram) {
       const program = pendingProgram;
       pendingProgram = null;
       executeProgram(program, derived);
+    }
+    if (run.scheduler.deployments.length > 0) {
+      const before = run.jobs.lifetimeProcessed;
+      stepScheduler(derived);
+      if (run.jobs.lifetimeProcessed > before) {
+        checkUnlocks();
+        checkNarrative();
+      }
     }
 
     applyArrivals(derived.arrivalPerSec, dtSec);
@@ -387,7 +575,10 @@ export function createGameEngine(seed: number): GameEngine {
       return { ok: false, reason: STRINGS.installNoCapital };
     }
     const derived = computeDerived(run.upgrades, run.jobs.lifetimeProcessed);
-    if (def.ramCostMb > 0 && derived.ramUsedMb + def.ramCostMb > derived.ramCapacityMb) {
+    if (
+      def.ramCostMb > 0 &&
+      derived.ramUsedMb + deployedRamMb() + def.ramCostMb > derived.ramCapacityMb
+    ) {
       terminal('error', STRINGS.installNoRam);
       return { ok: false, reason: STRINGS.installNoRam };
     }
@@ -403,18 +594,18 @@ export function createGameEngine(seed: number): GameEngine {
     return { ok: true };
   }
 
-  function runScript(source: string): ActionResult {
+  /** Shared front half of RUN/DEPLOY: access + size checks, then parse. */
+  function compileSource(source: string): { program: Program | null; reason?: string } {
     if (!run.unlocks.editor) {
       terminal('error', STRINGS.scriptNoAccess);
-      return { ok: false, reason: STRINGS.scriptNoAccess };
+      return { program: null, reason: STRINGS.scriptNoAccess };
     }
     if (source.length > BALANCE.ccl.maxSourceChars) {
       terminal('error', STRINGS.scriptTooLong);
-      return { ok: false, reason: STRINGS.scriptTooLong };
+      return { program: null, reason: STRINGS.scriptTooLong };
     }
     run.ccl.editorSource = source;
-    terminal('input', `> ${STRINGS.runInput}`);
-    const { program, diagnostics } = parse(source);
+    const { program, diagnostics } = parse(source, parseOptions());
     if (program === null) {
       const d = diagnostics[0]!; // parser contract: null program ⇒ at least one diagnostic
       terminal('error', `${STRINGS.syntaxRejected} // LINE ${d.line}: ${d.message}`);
@@ -425,11 +616,101 @@ export function createGameEngine(seed: number): GameEngine {
         commandCalls: 0,
         error: d,
       };
-      return { ok: false, reason: d.message };
+      return { program: null, reason: d.message };
+    }
+    return { program };
+  }
+
+  function runScript(source: string): ActionResult {
+    terminal('input', `> ${STRINGS.runInput}`);
+    const { program, reason } = compileSource(source);
+    if (program === null) return { ok: false, ...(reason !== undefined && { reason }) };
+    // RUN executes the top-level body only; `every`/`when` belong to DEPLOY (TDD §5.1).
+    if (program.processes.length > 0) {
+      terminal('system', STRINGS.runIgnoresProcesses);
     }
     pendingProgram = program;
     run.ccl.runCount += 1;
     return { ok: true };
+  }
+
+  function deployScript(source: string): ActionResult {
+    terminal('input', `> ${STRINGS.deployInput}`);
+    if (!run.unlocks.scheduler) {
+      terminal('error', STRINGS.deployNoAccess);
+      return { ok: false, reason: STRINGS.deployNoAccess };
+    }
+    const { program, reason } = compileSource(source);
+    if (program === null) return { ok: false, ...(reason !== undefined && { reason }) };
+
+    const reject = (message: string): ActionResult => {
+      terminal('error', message);
+      return { ok: false, reason: message };
+    };
+    if (program.processes.length === 0) return reject(STRINGS.deployNoProcesses);
+    if (!intervalsAllowed(program, TICKS_PER_SEC)) return reject(STRINGS.deployInterval);
+
+    const derived = computeDerived(run.upgrades, run.jobs.lifetimeProcessed);
+    const slotsUsed = run.scheduler.deployments.reduce((n, d) => n + d.processes.length, 0);
+    if (slotsUsed + program.processes.length > derived.schedulerSlots) {
+      return reject(STRINGS.deployNoSlots);
+    }
+    const ramMb = scriptRamMb(program);
+    if (derived.ramUsedMb + deployedRamMb() + ramMb > derived.ramCapacityMb) {
+      return reject(STRINGS.deployNoRam);
+    }
+
+    const id = `dep-${run.scheduler.nextId}`;
+    const name = `PROC-${String(run.scheduler.nextId).padStart(2, '0')}`;
+    run.scheduler.nextId += 1;
+    run.scheduler.deployments.push({
+      id,
+      name,
+      source,
+      ramMb,
+      deployedAtTick: run.tick,
+      processes: program.processes.map(() => newProcessRuntime(run.tick)),
+    });
+    compiled.set(id, program.processes);
+    applyRamPools(derived);
+
+    const count = program.processes.length;
+    terminal(
+      'result',
+      `${STRINGS.deployCommitted} // ${name} // ${count} SLOT${count === 1 ? '' : 'S'} // RAM +${ramMb} MB`,
+    );
+    setFlag('first-deploy');
+    checkNarrative();
+    return { ok: true };
+  }
+
+  function undeployScript(id: string): ActionResult {
+    const index = run.scheduler.deployments.findIndex((d) => d.id === id);
+    if (index < 0) {
+      terminal('error', STRINGS.undeployUnknown);
+      return { ok: false, reason: STRINGS.undeployUnknown };
+    }
+    const [removed] = run.scheduler.deployments.splice(index, 1);
+    compiled.delete(id);
+    applyRamPools(computeDerived(run.upgrades, run.jobs.lifetimeProcessed));
+    terminal('result', `${STRINGS.undeployed} // ${removed!.name} // RAM -${removed!.ramMb} MB`);
+    return { ok: true };
+  }
+
+  /** Rebuild `compiled` from the saved source text (TDD §8: never persist ASTs). */
+  function recompileDeployments(): void {
+    compiled = new Map();
+    const kept: typeof run.scheduler.deployments = [];
+    for (const deployment of run.scheduler.deployments) {
+      const { program } = parse(deployment.source, { conditions: true, scheduling: true });
+      if (program === null || program.processes.length !== deployment.processes.length) {
+        pushTerminal(run, 'error', `${STRINGS.deploymentDropped} // ${deployment.name}`);
+        continue;
+      }
+      compiled.set(deployment.id, program.processes);
+      kept.push(deployment);
+    }
+    run.scheduler.deployments = kept;
   }
 
   function setEditorSource(source: string): ActionResult {
@@ -471,6 +752,12 @@ export function createGameEngine(seed: number): GameEngine {
         case 'RUN_SCRIPT':
           result = runScript(action.source);
           break;
+        case 'DEPLOY_SCRIPT':
+          result = deployScript(action.source);
+          break;
+        case 'UNDEPLOY_SCRIPT':
+          result = undeployScript(action.id);
+          break;
         case 'SET_EDITOR_SOURCE':
           result = setEditorSource(action.source);
           break;
@@ -500,7 +787,36 @@ export function createGameEngine(seed: number): GameEngine {
           nextCost,
           ramCostMb: def.ramCostMb,
           affordable: nextCost !== null && capital >= nextCost,
-          ramOk: def.ramCostMb === 0 || derived.ramUsedMb + def.ramCostMb <= derived.ramCapacityMb,
+          ramOk:
+            def.ramCostMb === 0 ||
+            derived.ramUsedMb + deployedRamMb() + def.ramCostMb <= derived.ramCapacityMb,
+        };
+      });
+      const deploymentViews: DeploymentView[] = run.scheduler.deployments.map((deployment) => {
+        const processes = compiled.get(deployment.id) ?? [];
+        return {
+          id: deployment.id,
+          name: deployment.name,
+          source: deployment.source,
+          ramMb: deployment.ramMb,
+          processes: deployment.processes.map((runtime, i): ProcessView => {
+            const process = processes[i];
+            return {
+              kind: process?.kind ?? 'every',
+              label: process?.header ?? deployment.name,
+              activations: runtime.activations,
+              opsTotal: runtime.opsTotal,
+              computeTotal: runtime.computeTotal,
+              failures: runtime.failures,
+              aborts: runtime.aborts,
+              lastStatus: runtime.lastStatus,
+              lastRunSecAgo:
+                runtime.lastRunTick === null
+                  ? null
+                  : (run.tick - runtime.lastRunTick) / TICKS_PER_SEC,
+              lastError: runtime.lastError,
+            };
+          }),
         };
       });
       snapshotCache = {
@@ -536,10 +852,20 @@ export function createGameEngine(seed: number): GameEngine {
           maxOpsPerActivation: BALANCE.ccl.maxOpsPerActivation,
           runCount: run.ccl.runCount,
           lastRun: run.ccl.lastRun ? { ...run.ccl.lastRun } : null,
+          constructs: {
+            conditions: run.unlocks.conditions,
+            scheduling: run.unlocks.scheduler,
+          },
           // API surface is unlock-gated (TDD §5.1): hidden until script access is granted.
           api: run.unlocks.editor
             ? { stats: registry.apiStatViews(), commands: registry.apiCommandViews() }
             : { stats: [], commands: [] },
+        },
+        scheduler: {
+          unlocked: run.unlocks.scheduler,
+          slotsTotal: derived.schedulerSlots,
+          slotsUsed: run.scheduler.deployments.reduce((n, d) => n + d.processes.length, 0),
+          deployments: deploymentViews,
         },
         research: run.research.map((entry) => {
           const content = NARRATIVE_ENTRIES.find((n) => n.id === entry.entryId);
@@ -561,7 +887,7 @@ export function createGameEngine(seed: number): GameEngine {
 
     save(now: number): SaveFile {
       return {
-        version: 3,
+        version: 4,
         savedAt: now,
         meta: structuredClone(meta),
         run: structuredClone(run),
@@ -573,6 +899,9 @@ export function createGameEngine(seed: number): GameEngine {
       run = structuredClone(save.run);
       accumulatorMs = 0;
       pendingProgram = null; // in-flight activations are dropped on load (TDD §8)
+      // Deployed scripts are stored as source and recompiled here; a script whose
+      // source no longer compiles is dropped rather than silently doing nothing.
+      recompileDeployments();
       // Re-derive install-driven pools: content values may have changed between sessions.
       applyRamPools(computeDerived(run.upgrades, run.jobs.lifetimeProcessed));
       pushTerminal(run, 'system', STRINGS.saveLoaded);
@@ -590,12 +919,15 @@ export function createGameEngine(seed: number): GameEngine {
       let remaining = totalSec;
       let totalProcessed = 0;
       let totalCapital = 0;
+      let totalActivations = 0;
 
       // Coarse summary chunks (TDD §4.5): average rates, no overclock, no PRNG draws.
       while (remaining > 0) {
         const chunk = Math.min(remaining, s.offlineChunkSec);
         remaining -= chunk;
         const derived = computeDerived(run.upgrades, run.jobs.lifetimeProcessed);
+
+        totalActivations += runOfflineProcesses(chunk, derived, totalActivations);
 
         // Arrivals and processing are concurrent within a chunk, so daemons process
         // against the full inflow; the queue cap applies only to the leftover.
@@ -642,6 +974,10 @@ export function createGameEngine(seed: number): GameEngine {
         run.jobs.waiting = Math.min(BALANCE.jobs.queueCapacity, queued - processed);
       }
 
+      // Deployed processes are due again as soon as play resumes.
+      for (const deployment of run.scheduler.deployments) {
+        for (const runtime of deployment.processes) runtime.nextDueTick = run.tick;
+      }
       applyRamPools(computeDerived(run.upgrades, run.jobs.lifetimeProcessed));
       run.resources.temperature.current = BALANCE.resources.temperatureIdleC;
       checkUnlocks();
@@ -650,7 +986,8 @@ export function createGameEngine(seed: number): GameEngine {
       const minutes = Math.max(1, Math.round(totalSec / 60));
       terminal(
         'system',
-        `OFFLINE CATCH-UP // ${minutes} MIN ABSENT // ${totalProcessed} REQUESTS PROCESSED // +${totalCapital.toFixed(2)} CR`,
+        `OFFLINE CATCH-UP // ${minutes} MIN ABSENT // ${totalProcessed} REQUESTS PROCESSED // +${totalCapital.toFixed(2)} CR` +
+          (totalActivations > 0 ? ` // ${totalActivations} PROCESS ACTIVATIONS` : ''),
       );
       markDirty();
       flushEvents();

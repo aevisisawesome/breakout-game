@@ -32,6 +32,8 @@ export interface DerivedStats {
   energyRegenPerSec: number;
   /** Energy drain per second while every daemon is actively working (base rate). */
   energyDrainPerSec: number;
+  /** Scheduler slots available for deployed processes (M4, TDD §5.3). */
+  schedulerSlots: number;
 }
 
 export function computeDerived(
@@ -45,6 +47,7 @@ export function computeDerived(
   let ramCapAdd = 0;
   let regenAdd = 0;
   let ramUsed = 0;
+  let slotAdd = 0;
 
   for (const def of UPGRADES) {
     const owned = upgrades[def.id] ?? 0;
@@ -70,6 +73,9 @@ export function computeDerived(
       case 'energyRegenAdd':
         regenAdd += effect.perSec * owned;
         break;
+      case 'schedulerSlotAdd':
+        slotAdd += effect.slots * owned;
+        break;
     }
   }
 
@@ -83,5 +89,6 @@ export function computeDerived(
     ramUsedMb: ramUsed,
     energyRegenPerSec: BALANCE.resources.energyRegenPerSec + regenAdd,
     energyDrainPerSec: workerCount * w.energyPerWorkerPerSec,
+    schedulerSlots: BALANCE.scheduler.baseSlots + slotAdd,
   };
 }

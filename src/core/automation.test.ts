@@ -1,4 +1,4 @@
-/**
+﻿/**
  * M2 tests: upgrades, inference daemons, overclock, energy, offline catch-up,
  * save migration and the balance-pass pacing pins.
  */
@@ -16,7 +16,7 @@ function engineWith(setup: (run: RunState) => void, seed = 42): GameEngine {
   const run = newRunState(seed);
   setup(run);
   const engine = createGameEngine(seed);
-  engine.load({ version: 3, savedAt: 0, meta: newMetaState(), run });
+  engine.load({ version: 4, savedAt: 0, meta: newMetaState(), run });
   return engine;
 }
 
@@ -72,7 +72,7 @@ describe('BUY_UPGRADE', () => {
     const engine = engineWith((run) => {
       run.jobs.lifetimeProcessed = 200;
       run.resources.capital.current = 10_000;
-      // 6*64 + 3*32 + 2*16 = 512 MB — the base partition is exactly full.
+      // 6*64 + 3*32 + 2*16 = 512 MB â€” the base partition is exactly full.
       run.upgrades = { 'worker-daemon': 6, 'request-router': 3, 'batch-window': 2 };
     });
     const blocked = engine.dispatch({ type: 'BUY_UPGRADE', id: 'batch-window' });
@@ -108,11 +108,11 @@ describe('inference daemons', () => {
     });
     advance(engine, 60);
     const snap = engine.getSnapshot();
-    // One daemon at 0.6 jobs/s over 60 s ≈ 36 jobs (arrival 2.6/s keeps the queue fed).
+    // One daemon at 0.6 jobs/s over 60 s â‰ˆ 36 jobs (arrival 2.6/s keeps the queue fed).
     const processed = snap.jobs.lifetimeProcessed - 100;
     expect(processed).toBeGreaterThanOrEqual(34);
     expect(processed).toBeLessThanOrEqual(36);
-    // Net compute per daemon job: +1 − 0.4 overhead = +0.6.
+    // Net compute per daemon job: +1 âˆ’ 0.4 overhead = +0.6.
     expect(snap.resources.compute.current).toBeCloseTo(50 + processed * 0.6, 6);
     expect(snap.resources.capital.current).toBeCloseTo(processed * 0.25, 6);
   });
@@ -226,8 +226,8 @@ describe('offline catch-up', () => {
 
   it('daemons process at coarse average rates while away', () => {
     const engine = engineWith((run) => {
-      run.jobs.lifetimeProcessed = 150; // arrival 2.6/s > daemon rate — daemons are the limit
-      run.upgrades = { 'worker-daemon': 2 }; // 1.2 jobs/s, drain 1.0 < regen 1.2 — sustained
+      run.jobs.lifetimeProcessed = 150; // arrival 2.6/s > daemon rate â€” daemons are the limit
+      run.upgrades = { 'worker-daemon': 2 }; // 1.2 jobs/s, drain 1.0 < regen 1.2 â€” sustained
       run.resources.compute.current = 100;
     });
     engine.advanceOffline(10 * 60 * 1000);
@@ -259,21 +259,26 @@ describe('save migration', () => {
     const engine = createGameEngine(42);
     engine.tick(3000);
     const current = engine.save(123);
-    // Reconstruct the M1 shape: no upgrades, no workers, no ccl, version 1.
+    // Reconstruct the M1 shape: no upgrades, no workers, no ccl/scheduler, version 1.
     const v1run = { ...current.run } as Record<string, unknown>;
     delete v1run.upgrades;
     delete v1run.workers;
     delete v1run.ccl;
+    delete v1run.scheduler;
+    delete v1run.flags;
     const v1 = { version: 1, savedAt: 123, meta: current.meta, run: v1run };
     const text = serializeSave(v1 as unknown as SaveFile);
 
     const restored = deserializeSave(text);
     expect(restored).not.toBeNull();
-    expect(restored!.version).toBe(3);
+    expect(restored!.version).toBe(4);
     expect(restored!.run.upgrades).toEqual({});
     expect(restored!.run.workers).toEqual({ processAccumulator: 0, overclockRemainingSec: 0 });
     expect(restored!.run.ccl).toEqual({ editorSource: '', runCount: 0, lastRun: null });
+    expect(restored!.run.scheduler).toEqual({ deployments: [], nextId: 1 });
+    expect(restored!.run.flags).toEqual([]);
     expect(restored!.run.unlocks.editor).toBe(false);
+    expect(restored!.run.unlocks.scheduler).toBe(false);
 
     // And a fresh engine accepts the migrated file.
     const engineB = createGameEngine(1);

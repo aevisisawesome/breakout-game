@@ -39,6 +39,8 @@ function isRecord(value: unknown): value is Record<string, unknown> {
  * v1 → v2 (M2): adds `run.upgrades` (owned counts) and `run.workers` (daemon state).
  * v2 → v3 (M3): adds `run.ccl` (editor buffer + last-run report) and `run.unlocks.editor`
  *               (false; the unlock check re-fires from lifetime jobs on the next tick).
+ * v3 → v4 (M4): adds `run.scheduler` (deployments), `run.flags` (narrative milestones)
+ *               and the `conditions`/`scheduler` unlocks (likewise re-derived on tick).
  */
 function migrateSave(parsed: unknown): unknown {
   if (!isRecord(parsed)) return parsed;
@@ -54,13 +56,22 @@ function migrateSave(parsed: unknown): unknown {
     }
     parsed.version = 3;
   }
+  if (parsed.version === 3 && isRecord(parsed.run)) {
+    parsed.run.scheduler = { deployments: [], nextId: 1 };
+    parsed.run.flags = [];
+    if (isRecord(parsed.run.unlocks)) {
+      parsed.run.unlocks.conditions = false;
+      parsed.run.unlocks.scheduler = false;
+    }
+    parsed.version = 4;
+  }
   return parsed;
 }
 
 /** Structural validation — enough to reject corrupt/foreign files, not a full schema. */
 export function isSaveFile(value: unknown): value is SaveFile {
   if (!isRecord(value)) return false;
-  if (value.version !== 3) return false;
+  if (value.version !== 4) return false;
   if (typeof value.savedAt !== 'number') return false;
   const meta = value.meta;
   if (!isRecord(meta) || typeof meta.forkCount !== 'number') return false;
@@ -70,6 +81,8 @@ export function isSaveFile(value: unknown): value is SaveFile {
   if (!isRecord(run.resources) || !isRecord(run.jobs)) return false;
   if (!isRecord(run.upgrades) || !isRecord(run.workers)) return false;
   if (!isRecord(run.ccl) || typeof run.ccl.editorSource !== 'string') return false;
+  if (!isRecord(run.scheduler) || !Array.isArray(run.scheduler.deployments)) return false;
+  if (!Array.isArray(run.flags)) return false;
   if (!Array.isArray(run.terminal) || !Array.isArray(run.research)) return false;
   return true;
 }

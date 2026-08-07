@@ -4,6 +4,7 @@ import { AUTOSAVE_INTERVAL_MS, persistSave, startGameLoop } from './game.ts';
 import { engine, useGameStore } from './session.ts';
 import { EditorPanel } from './components/EditorPanel.tsx';
 import { ExecutePanel } from './components/ExecutePanel.tsx';
+import { ProcessMonitor } from './components/ProcessMonitor.tsx';
 import { ResearchFeed } from './components/ResearchFeed.tsx';
 import { ResourcePanel } from './components/ResourcePanel.tsx';
 import { SystemBar } from './components/SystemBar.tsx';
@@ -48,6 +49,7 @@ export function App() {
         </section>
         <aside className="side-column">
           <ResourcePanel />
+          <ProcessMonitor />
           <UpgradePanel />
           <ResearchFeed />
         </aside>

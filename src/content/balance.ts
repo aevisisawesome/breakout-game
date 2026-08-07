@@ -70,6 +70,10 @@ export const BALANCE = {
   ccl: {
     /** Scripting interface (M3) unlocks at this lifetime processed-job count. */
     unlockAtJobs: 200,
+    /** Conditional rules (`if`/`else`, `and`/`or`/`not`) unlock here (M4, GDD tier 3). */
+    conditionsUnlockAtJobs: 320,
+    /** Scheduled processes (`every`/`when`) + DEPLOY unlock here (M4, GDD tier 4). */
+    schedulerUnlockAtJobs: 480,
     /** Compute drawn per interpreter op-unit (TDD §5.2 fuel). */
     computePerOp: 0.05,
     /** Per-activation op-unit budget; exceeding it preempts the process. */
@@ -84,6 +88,26 @@ export const BALANCE = {
       print: 0,
       buy_compute: 0,
     },
+  },
+
+  /** Scheduler (M4, TDD §5.3): slots, polling cadence, script RAM pricing. */
+  scheduler: {
+    /** Slots available before any PROCESS TABLE EXTENSION installs. */
+    baseSlots: 1,
+    /**
+     * `when` guards are sampled every N ticks rather than every tick. Polling is
+     * fuel-metered, so the cadence sets the standing compute cost of a condition.
+     */
+    whenPollTicks: 5,
+    /** Shortest `every` interval accepted at deploy time, in ticks. */
+    minIntervalTicks: 5,
+    /** RAM footprint of a deployed script: a fixed base plus a per-AST-node charge. */
+    scriptRamBaseMb: 6,
+    scriptRamPerNodeMb: 0.5,
+    /** Offline safe mode (TDD §4.5): activations per `every` process per catch-up chunk. */
+    offlineMaxActivationsPerChunk: 20,
+    /** Offline safe mode: total scheduled activations across one catch-up. */
+    offlineMaxActivations: 400,
   },
 
   save: {

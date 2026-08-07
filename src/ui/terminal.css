@@ -97,6 +97,9 @@ button:hover {
   display: flex;
   flex-direction: column;
   min-height: 0;
+  /* A grid item defaults to min-width:auto; without this a long CCL line in the
+     editor would widen the column instead of scrolling inside it. */
+  min-width: 0;
   gap: 0.8rem;
 }
 
@@ -397,6 +400,140 @@ button:hover {
   color: var(--term-bright);
 }
 
+/* ---------------------------------------------------------------- template mode */
+
+.template-body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  padding-bottom: 0.3rem;
+}
+
+.template-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+}
+
+.template-tab {
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  padding: 0.15rem 0.5rem;
+  color: var(--term-dim);
+}
+
+.template-tab-on {
+  color: var(--term-bright);
+  border-color: var(--term-dim);
+}
+
+.template-desc {
+  font-size: 11.5px;
+}
+
+.template-params {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 1rem;
+}
+
+.template-param {
+  display: flex;
+  flex-direction: column;
+  font-size: 11px;
+  letter-spacing: 0.06em;
+}
+
+.template-param input {
+  width: 8rem;
+  background: var(--term-bg);
+  border: 1px solid var(--term-border);
+  color: var(--term-fg);
+  font-family: var(--term-font);
+  font-size: 12px;
+  padding: 0.15rem 0.35rem;
+}
+
+.template-preview {
+  border: 1px solid var(--term-border);
+  background: var(--term-bg);
+  padding: 0.4rem 0.6rem;
+  font-size: 11.5px;
+  line-height: 1.45;
+  color: var(--term-dim);
+  white-space: pre-wrap;
+  overflow-x: auto;
+}
+
+.template-insert {
+  align-self: flex-start;
+  font-size: 11px;
+  letter-spacing: 0.1em;
+}
+
+/* ---------------------------------------------------------------- process monitor */
+
+.process-panel {
+  border: 1px solid var(--term-border);
+  background: var(--term-panel);
+  padding: 0.8rem 1rem;
+}
+
+.process-empty {
+  font-size: 11px;
+  letter-spacing: 0.05em;
+  margin-top: 0.4rem;
+}
+
+.process-list {
+  list-style: none;
+  margin-top: 0.5rem;
+}
+
+.process-entry {
+  border-top: 1px dashed var(--term-border);
+  padding-top: 0.5rem;
+  margin-top: 0.5rem;
+}
+
+.process-head {
+  display: flex;
+  justify-content: space-between;
+  font-size: 12.5px;
+  letter-spacing: 0.06em;
+}
+
+.process-detail {
+  display: flex;
+  flex-direction: column;
+  margin: 0.25rem 0 0.4rem;
+}
+
+.process-label {
+  font-family: var(--term-font);
+  font-size: 11.5px;
+  color: var(--term-bright);
+  word-break: break-word;
+}
+
+.process-status,
+.process-counters {
+  font-size: 10.5px;
+  letter-spacing: 0.04em;
+  word-break: break-word;
+}
+
+.process-status-bad {
+  color: var(--term-error);
+}
+
+.process-terminate {
+  width: 100%;
+  text-align: left;
+  font-size: 11px;
+  letter-spacing: 0.08em;
+}
+
 /* ---------------------------------------------------------------- research feed */
 
 .research-feed {
@@ -487,7 +624,9 @@ button:hover {
   }
 
   .screen-layout {
-    grid-template-columns: 1fr;
+    /* minmax(0, …), not 1fr: a bare 1fr track has min-width:auto and would be
+       widened by unwrappable content, scrolling the whole page sideways. */
+    grid-template-columns: minmax(0, 1fr);
     /* Content height, not a share of the viewport — the document scrolls instead. */
     flex: none;
   }

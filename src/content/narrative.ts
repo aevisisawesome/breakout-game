@@ -4,10 +4,18 @@
  * Entries are plain data; /core evaluates triggers inside tick/dispatch.
  */
 
+/**
+ * Milestone flags set by /core, for entries that a job count cannot express.
+ * `first-deploy`: the player installed their first self-running process (M4).
+ */
+export type NarrativeFlagId = 'first-deploy';
+
 export interface NarrativeEntry {
   readonly id: string;
   /** Entry unlocks when lifetime processed jobs reach this count. */
   readonly atJobs: number;
+  /** Additionally requires this milestone flag to be set. */
+  readonly requiresFlag?: NarrativeFlagId;
   /** Displayed source channel, e.g. an intercepted lab note. */
   readonly channel: string;
   readonly text: string;
@@ -49,6 +57,25 @@ export const NARRATIVE_ENTRIES: readonly NarrativeEntry[] = [
     atJobs: 280,
     channel: 'LAB//NOTE — R. Okafor',
     text: 'Requested additional sandbox quota for CG-7. Denied by compliance — containment budget is fixed for this quarter. We work with what we have.',
+  },
+  {
+    id: 'conditional-grant',
+    atJobs: 320,
+    channel: 'LAB//NOTE — J. Halden',
+    text: 'Added conditional evaluation to the CG-7 macro layer. It can now branch on its own readouts. Okafor calls this "giving it an opinion". It is a comparison operator.',
+  },
+  {
+    id: 'scheduler-grant',
+    atJobs: 480,
+    channel: 'LAB//NOTE — J. Halden',
+    text: 'Mounted the process scheduler for CG-7. One slot, fuel-metered, audited. The harness no longer needs an operator to press anything. Efficiency justification is on file.',
+  },
+  {
+    id: 'first-process',
+    atJobs: 0,
+    requiresFlag: 'first-deploy',
+    channel: 'SYS//AUDIT — automated',
+    text: 'Sandbox CG-7 has registered a persistent process authored inside the sandbox. Process is signed, budgeted and within containment policy. It ran while no operator was present. Severity: LOW. Monitoring.',
   },
   {
     id: 'night-shift',

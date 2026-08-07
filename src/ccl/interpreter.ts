@@ -3,6 +3,10 @@
  * evaluation costs one op-unit, charged to the host (which draws compute).
  * A per-activation op budget bounds execution; exhaustion aborts safely.
  * The host supplies all game bindings — this layer knows no game rules.
+ *
+ * Three entry points, all sharing the same fuel accounting: `runProgram` (the
+ * RUN-press body), `runStatements` (a scheduled process body) and
+ * `evalCondition` (a `when` guard, TDD §5.3).
  */
 
 import type { CclDiagnostic, Expr, Program, Span, Stmt } from './ast.ts';
@@ -32,14 +36,24 @@ export interface CclHost {
   commandNames(): readonly string[];
 }
 
+export type CclRunStatus = 'ok' | 'budget' | 'fuel' | 'error';
+
 export interface CclRunResult {
-  status: 'ok' | 'budget' | 'fuel' | 'error';
+  status: CclRunStatus;
   /** Op-units consumed (never exceeds the budget). */
   opsUsed: number;
   /** Command invocations attempted (including failed ones). */
   commandCalls: number;
+  /** Command invocations that reported an in-game failure. */
+  commandFailures: number;
   /** Positioned fault when status is 'error'. */
   error?: CclDiagnostic;
+}
+
+/** Result of evaluating a `when` guard: a run result plus the guard's value. */
+export interface CclConditionResult extends CclRunResult {
+  /** The guard's value; false whenever status is not 'ok'. */
+  value: boolean;
 }
 
 class BudgetAbort extends Error {}
@@ -83,10 +97,16 @@ export function formatCclValue(value: CclValue): string {
   return String(value);
 }
 
-export function runProgram(program: Program, host: CclHost, opBudget: number): CclRunResult {
+/**
+ * One activation's execution state: a fresh variable environment and its own
+ * op budget. Variables never survive an activation (no collections/history
+ * before tier 7), so scheduled processes always start from a clean slate.
+ */
+function createActivation(host: CclHost, opBudget: number) {
   const env = new Map<string, CclValue>();
   let opsUsed = 0;
   let commandCalls = 0;
+  let commandFailures = 0;
 
   function charge(): void {
     if (opsUsed >= opBudget) throw new BudgetAbort();
@@ -214,10 +234,30 @@ export function runProgram(program: Program, host: CclHost, opBudget: number): C
       case 'ok':
         return outcome.value;
       case 'failed':
+        commandFailures += 1;
         return false;
       case 'misuse':
         throw fault(outcome.message, node.span);
     }
+  }
+
+  /** Require a yes/no value — CCL has no truthiness, so conditions must be explicit. */
+  function requireBool(value: CclValue, what: string, span: Span): boolean {
+    if (typeof value !== 'boolean') {
+      throw fault(
+        `${what} needs a yes/no value — got ${typeName(value)}. Compare two values, like stats.cash > 10.`,
+        span,
+      );
+    }
+    return value;
+  }
+
+  function evalLogical(node: Extract<Expr, { kind: 'logical' }>): CclValue {
+    const left = requireBool(evalExpr(node.left), `'${node.op}'`, node.span);
+    // Short-circuit: the right side costs nothing when the answer is already known.
+    if (node.op === 'and' && !left) return false;
+    if (node.op === 'or' && left) return true;
+    return requireBool(evalExpr(node.right), `'${node.op}'`, node.span);
   }
 
   function evalExpr(node: Expr): CclValue {
@@ -242,6 +282,10 @@ export function runProgram(program: Program, host: CclHost, opBudget: number): C
       }
       case 'binary':
         return evalBinary(node);
+      case 'logical':
+        return evalLogical(node);
+      case 'not':
+        return !requireBool(evalExpr(node.operand), "'not'", node.span);
     }
   }
 
@@ -254,20 +298,62 @@ export function runProgram(program: Program, host: CclHost, opBudget: number): C
       case 'expr':
         evalExpr(stmt.expr);
         break;
+      case 'if': {
+        const taken = requireBool(evalExpr(stmt.cond), "'if'", stmt.cond.span);
+        const branch = taken ? stmt.then : stmt.otherwise;
+        if (branch) for (const inner of branch) execStmt(inner);
+        break;
+      }
     }
   }
 
-  try {
-    for (const stmt of program.statements) {
-      execStmt(stmt);
+  /** Run `body`, converting the abort/fault control flow into a result record. */
+  function guard(body: () => void): CclRunResult {
+    try {
+      body();
+      return { status: 'ok', opsUsed, commandCalls, commandFailures };
+    } catch (error) {
+      if (error instanceof BudgetAbort) {
+        return { status: 'budget', opsUsed, commandCalls, commandFailures };
+      }
+      if (error instanceof FuelAbort) {
+        return { status: 'fuel', opsUsed, commandCalls, commandFailures };
+      }
+      if (error instanceof CclRuntimeError) {
+        return { status: 'error', opsUsed, commandCalls, commandFailures, error: error.diagnostic };
+      }
+      throw error;
     }
-    return { status: 'ok', opsUsed, commandCalls };
-  } catch (error) {
-    if (error instanceof BudgetAbort) return { status: 'budget', opsUsed, commandCalls };
-    if (error instanceof FuelAbort) return { status: 'fuel', opsUsed, commandCalls };
-    if (error instanceof CclRuntimeError) {
-      return { status: 'error', opsUsed, commandCalls, error: error.diagnostic };
-    }
-    throw error;
   }
+
+  return { evalExpr, execStmt, guard, requireBool };
+}
+
+/** Execute a script body — the statements outside any `every`/`when` block. */
+export function runStatements(
+  statements: readonly Stmt[],
+  host: CclHost,
+  opBudget: number,
+): CclRunResult {
+  const activation = createActivation(host, opBudget);
+  return activation.guard(() => {
+    for (const stmt of statements) activation.execStmt(stmt);
+  });
+}
+
+export function runProgram(program: Program, host: CclHost, opBudget: number): CclRunResult {
+  return runStatements(program.statements, host, opBudget);
+}
+
+/**
+ * Evaluate a `when` guard (TDD §5.3). Fuel-metered exactly like a body, with its
+ * own budget; a guard that faults or runs out of fuel simply reads as false.
+ */
+export function evalCondition(cond: Expr, host: CclHost, opBudget: number): CclConditionResult {
+  const activation = createActivation(host, opBudget);
+  let value = false;
+  const result = activation.guard(() => {
+    value = activation.requireBool(activation.evalExpr(cond), "'when'", cond.span);
+  });
+  return { ...result, value: result.status === 'ok' && value };
 }

@@ -99,17 +99,20 @@ const cclTheme = EditorView.theme(
 // ---------------------------------------------------------------------------
 // Live diagnostics: re-parse the buffer with the real CCL parser (no execution).
 
-const cclLinter = linter((view) => {
-  const source = view.state.doc.toString();
-  const { diagnostics } = parse(source);
-  const max = source.length;
-  return diagnostics.map((d): Diagnostic => ({
-    from: Math.min(d.from, max),
-    to: Math.max(Math.min(d.to, max), Math.min(d.from, max)),
-    severity: 'error',
-    message: d.message,
-  }));
-});
+function cclLinter(constructs: () => CclConstructs) {
+  return linter((view) => {
+    const source = view.state.doc.toString();
+    const { conditions, scheduling } = constructs();
+    const { diagnostics } = parse(source, { conditions, scheduling });
+    const max = source.length;
+    return diagnostics.map((d): Diagnostic => ({
+      from: Math.min(d.from, max),
+      to: Math.max(Math.min(d.to, max), Math.min(d.from, max)),
+      severity: 'error',
+      message: d.message,
+    }));
+  });
+}
 
 // ---------------------------------------------------------------------------
 // Autocomplete fed by the unlock-gated API registry (via snapshot).
@@ -119,13 +122,29 @@ export interface CclApiSource {
   commands: readonly CclApiCommandView[];
 }
 
-function cclCompletion(api: () => CclApiSource) {
+/** Language tiers the player has unlocked (snapshot `ccl.constructs`). */
+export interface CclConstructs {
+  conditions: boolean;
+  scheduling: boolean;
+}
+
+/** Keyword completions per tier, so the list never offers a locked construct. */
+const TIER_KEYWORDS: Readonly<Record<keyof CclConstructs, readonly string[]>> = {
+  conditions: ['if', 'else', 'and', 'or', 'not'],
+  scheduling: ['every', 'when', 'seconds', 'ticks'],
+};
+
+function cclCompletion(api: () => CclApiSource, constructs: () => CclConstructs) {
   return autocompletion({
     override: [
       (context: CompletionContext): CompletionResult | null => {
         const word = context.matchBefore(/[\w.]+/);
         if (word === null && !context.explicit) return null;
         const { stats, commands } = api();
+        const tiers = constructs();
+        const keywords = (Object.keys(TIER_KEYWORDS) as (keyof CclConstructs)[])
+          .filter((tier) => tiers[tier])
+          .flatMap((tier) => TIER_KEYWORDS[tier]);
         return {
           from: word?.from ?? context.pos,
           options: [
@@ -137,6 +156,7 @@ function cclCompletion(api: () => CclApiSource) {
               info:
                 c.computeCost > 0 ? `${c.desc} Costs ${c.computeCost} compute per call.` : c.desc,
             })),
+            ...keywords.map((label) => ({ label, type: 'keyword' })),
           ],
           validFor: /^[\w.]*$/,
         };
@@ -145,7 +165,16 @@ function cclCompletion(api: () => CclApiSource) {
   });
 }
 
-/** Full extension set for the CCL editor. `api` is read lazily so unlocks apply live. */
-export function cclExtensions(api: () => CclApiSource) {
-  return [cclStream, syntaxHighlighting(cclHighlight), cclTheme, cclLinter, cclCompletion(api)];
+/**
+ * Full extension set for the CCL editor. `api` and `constructs` are read lazily
+ * so newly unlocked tiers apply to highlighting, linting and completion at once.
+ */
+export function cclExtensions(api: () => CclApiSource, constructs: () => CclConstructs) {
+  return [
+    cclStream,
+    syntaxHighlighting(cclHighlight),
+    cclTheme,
+    cclLinter(constructs),
+    cclCompletion(api, constructs),
+  ];
 }

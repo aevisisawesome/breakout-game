@@ -1,4 +1,4 @@
-/**
+﻿/**
  * M3 engine tests: RUN_SCRIPT flow, fuel drawn from compute, command effects,
  * editor unlock beat, persistence of the editor buffer, and determinism.
  */
@@ -19,7 +19,7 @@ function scriptEngine(setup?: (run: RunState) => void, seed = 42): GameEngine {
   run.jobs.waiting = 10;
   setup?.(run);
   const engine = createGameEngine(seed);
-  engine.load({ version: 3, savedAt: 0, meta: newMetaState(), run });
+  engine.load({ version: 4, savedAt: 0, meta: newMetaState(), run });
   return engine;
 }
 
@@ -36,7 +36,7 @@ function terminalText(engine: GameEngine): string {
     .join('\n');
 }
 
-describe('RUN_SCRIPT — execution', () => {
+describe('RUN_SCRIPT â€” execution', () => {
   it('runs the acceptance script: prints stats and processes jobs, visibly costing compute', () => {
     const engine = scriptEngine();
     const before = engine.getSnapshot();
@@ -66,7 +66,7 @@ describe('RUN_SCRIPT — execution', () => {
     );
   });
 
-  it('executes inside tick(), not at dispatch time (TDD §5.2)', () => {
+  it('executes inside tick(), not at dispatch time (TDD Â§5.2)', () => {
     const engine = scriptEngine();
     engine.dispatch({ type: 'RUN_SCRIPT', source: 'process_job()' });
     expect(engine.getSnapshot().jobs.lifetimeProcessed).toBe(0);
@@ -106,7 +106,7 @@ describe('RUN_SCRIPT — execution', () => {
   });
 });
 
-describe('RUN_SCRIPT — aborts and faults', () => {
+describe('RUN_SCRIPT â€” aborts and faults', () => {
   it('preempts when the op budget is exhausted (runaway script fails safely)', () => {
     const engine = scriptEngine();
     const longScript = Array.from({ length: 300 }, (_, i) => `v${i} = ${i}`).join('\n');
@@ -125,7 +125,7 @@ describe('RUN_SCRIPT — aborts and faults', () => {
     runScript(engine, longScript);
     const report = engine.getSnapshot().ccl.lastRun!;
     expect(report.status).toBe('fuel');
-    // ~20 ops of fuel; repeated 0.05 draws accumulate FP error, so allow ±1.
+    // ~20 ops of fuel; repeated 0.05 draws accumulate FP error, so allow Â±1.
     const nominalOps = Math.floor(1 / BALANCE.ccl.computePerOp);
     expect(report.opsUsed).toBeGreaterThanOrEqual(nominalOps - 1);
     expect(report.opsUsed).toBeLessThanOrEqual(nominalOps);
@@ -203,7 +203,7 @@ describe('editor persistence + determinism', () => {
     expect(engineB.getSnapshot().ccl.editorSource).toBe('print(stats.cash)');
   });
 
-  it('a queued (not yet executed) script is dropped on load (TDD §8)', () => {
+  it('a queued (not yet executed) script is dropped on load (TDD Â§8)', () => {
     const engine = scriptEngine();
     engine.dispatch({ type: 'RUN_SCRIPT', source: 'process_job()' });
     engine.load(engine.save(0));
