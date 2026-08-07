@@ -44,6 +44,8 @@ describe('save serialization', () => {
     expect(deserializeSave('not json at all')).toBeNull();
     expect(deserializeSave('{}')).toBeNull();
     expect(deserializeSave(JSON.stringify({ version: 99, savedAt: 0 }))).toBeNull();
-    expect(deserializeSave(JSON.stringify({ version: 1, savedAt: 0, meta: {}, run: {} }))).toBeNull();
+    expect(
+      deserializeSave(JSON.stringify({ version: 1, savedAt: 0, meta: {}, run: {} })),
+    ).toBeNull();
   });
 });

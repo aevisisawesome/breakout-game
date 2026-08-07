@@ -4,11 +4,11 @@ This folder is the single source of truth for the design, technical direction an
 
 ## Documents
 
-| Document | Purpose |
-| --- | --- |
-| [GameDesignDocument.md](GameDesignDocument.md) | Original purpose and full game design. The "why" and "what" of the game. |
-| [TechnicalDesignDocument.md](TechnicalDesignDocument.md) | Technical design paradigm: architecture, stack, simulation model, CCL language design. The "how". |
-| [ImplementationPlan.md](ImplementationPlan.md) | Milestone plan and progress tracker for the first playable prototype. The "when" and "current status". |
+| Document                                                 | Purpose                                                                                                |
+| -------------------------------------------------------- | ------------------------------------------------------------------------------------------------------ |
+| [GameDesignDocument.md](GameDesignDocument.md)           | Original purpose and full game design. The "why" and "what" of the game.                               |
+| [TechnicalDesignDocument.md](TechnicalDesignDocument.md) | Technical design paradigm: architecture, stack, simulation model, CCL language design. The "how".      |
+| [ImplementationPlan.md](ImplementationPlan.md)           | Milestone plan and progress tracker for the first playable prototype. The "when" and "current status". |
 
 ## ⚠️ Documentation maintenance policy (mandatory)
 

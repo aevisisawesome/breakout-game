@@ -200,9 +200,7 @@ describe('energy', () => {
       run.resources.energy.current = 20;
     });
     advance(engine, 80);
-    expect(engine.getSnapshot().resources.energy.current).toBe(
-      BALANCE.resources.energyCapacity,
-    );
+    expect(engine.getSnapshot().resources.energy.current).toBe(BALANCE.resources.energyCapacity);
   });
 });
 

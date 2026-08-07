@@ -214,10 +214,7 @@ export function createGameEngine(seed: number): GameEngine {
         );
         break;
       case 'budget':
-        terminal(
-          'error',
-          `${STRINGS.scriptPreempted} // ${BALANCE.ccl.maxOpsPerActivation} OPS`,
-        );
+        terminal('error', `${STRINGS.scriptPreempted} // ${BALANCE.ccl.maxOpsPerActivation} OPS`);
         break;
       case 'fuel':
         terminal('error', `${STRINGS.scriptFuelExhausted} // ${result.opsUsed} OPS`);
@@ -503,8 +500,7 @@ export function createGameEngine(seed: number): GameEngine {
           nextCost,
           ramCostMb: def.ramCostMb,
           affordable: nextCost !== null && capital >= nextCost,
-          ramOk:
-            def.ramCostMb === 0 || derived.ramUsedMb + def.ramCostMb <= derived.ramCapacityMb,
+          ramOk: def.ramCostMb === 0 || derived.ramUsedMb + def.ramCostMb <= derived.ramCapacityMb,
         };
       });
       snapshotCache = {

@@ -47,15 +47,24 @@ export default tseslint.config(
         { name: 'document', message: 'No browser APIs in the sim layers (TDD §3).' },
         { name: 'localStorage', message: 'Storage is injected at startup (TDD §3).' },
         { name: 'requestAnimationFrame', message: 'The render loop lives in /ui (TDD §4.1).' },
-        { name: 'setTimeout', message: 'No timers in the sim layers; time comes from tick() (TDD §3).' },
-        { name: 'setInterval', message: 'No timers in the sim layers; time comes from tick() (TDD §3).' },
+        {
+          name: 'setTimeout',
+          message: 'No timers in the sim layers; time comes from tick() (TDD §3).',
+        },
+        {
+          name: 'setInterval',
+          message: 'No timers in the sim layers; time comes from tick() (TDD §3).',
+        },
       ],
       'no-restricted-imports': [
         'error',
         {
           patterns: [
             { group: ['**/ui/*', '**/ui'], message: 'Nothing imports from /ui (TDD §3).' },
-            { group: ['react', 'react-dom', 'react/*', 'react-dom/*'], message: 'No React in the sim layers (TDD §3).' },
+            {
+              group: ['react', 'react-dom', 'react/*', 'react-dom/*'],
+              message: 'No React in the sim layers (TDD §3).',
+            },
           ],
         },
       ],
@@ -71,8 +80,14 @@ export default tseslint.config(
         {
           patterns: [
             { group: ['**/ui/*', '**/ui'], message: 'Nothing imports from /ui (TDD §3).' },
-            { group: ['**/core/*', '**/core'], message: 'Dependency rule is core → ccl, not ccl → core (TDD §3).' },
-            { group: ['react', 'react-dom', 'react/*', 'react-dom/*'], message: 'No React in the sim layers (TDD §3).' },
+            {
+              group: ['**/core/*', '**/core'],
+              message: 'Dependency rule is core → ccl, not ccl → core (TDD §3).',
+            },
+            {
+              group: ['react', 'react-dom', 'react/*', 'react-dom/*'],
+              message: 'No React in the sim layers (TDD §3).',
+            },
           ],
         },
       ],

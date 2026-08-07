@@ -37,7 +37,11 @@ export function ResourcePanel() {
       )}
       {unlocks.systemReadouts && (
         <>
-          <Meter label="RAM (MB)" current={resources.ram.current} capacity={resources.ram.capacity} />
+          <Meter
+            label="RAM (MB)"
+            current={resources.ram.current}
+            capacity={resources.ram.capacity}
+          />
           <Meter
             label="ENERGY"
             current={resources.energy.current}
