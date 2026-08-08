@@ -1,4 +1,5 @@
 import { engine, useGameStore } from '../session.ts';
+import { Panel } from './Panel.tsx';
 
 export function ExecutePanel() {
   const jobs = useGameStore((s) => s.snapshot.jobs);
@@ -7,7 +8,7 @@ export function ExecutePanel() {
   const overclockActive = workers.overclockRemainingSec > 0;
 
   return (
-    <div className="execute-panel">
+    <Panel id="execute" title="INFERENCE TRIGGER" className="execute-panel">
       <button
         type="button"
         className="execute-button"
@@ -34,6 +35,6 @@ export function ExecutePanel() {
           </span>
         </div>
       )}
-    </div>
+    </Panel>
   );
 }

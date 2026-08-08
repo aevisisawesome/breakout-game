@@ -1,4 +1,5 @@
 import { useGameStore } from '../session.ts';
+import { Panel } from './Panel.tsx';
 import { TICKS_PER_SEC } from '../../core/engine.ts';
 import type { ExecLogEntry } from '../../core/types.ts';
 
@@ -38,8 +39,7 @@ export function ExecutionLog() {
   if (!telemetry.unlocked) return null;
 
   return (
-    <div className="log-panel">
-      <h2 className="panel-title">EXECUTION LOG</h2>
+    <Panel id="execlog" title="EXECUTION LOG" className="log-panel">
       {telemetry.log.length === 0 ? (
         <p className="terminal-dim log-empty">NO ACTIVATIONS RECORDED.</p>
       ) : (
@@ -59,6 +59,6 @@ export function ExecutionLog() {
           ))}
         </ol>
       )}
-    </div>
+    </Panel>
   );
 }

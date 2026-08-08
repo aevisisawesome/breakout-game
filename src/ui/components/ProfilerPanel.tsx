@@ -1,4 +1,5 @@
 import { useGameStore } from '../session.ts';
+import { Panel } from './Panel.tsx';
 
 /**
  * Profiler (M5, TDD §5.4): per-process activations, average/total ops, share of
@@ -11,8 +12,7 @@ export function ProfilerPanel() {
   if (!telemetry.unlocked) return null;
 
   return (
-    <div className="profiler-panel">
-      <h2 className="panel-title">PROCESS PROFILER</h2>
+    <Panel id="profiler" title="PROCESS PROFILER" className="profiler-panel">
       <div className="readout">
         <span>SCRIPT COMPUTE</span>
         <span>{telemetry.scriptComputeTotal.toFixed(1)}</span>
@@ -46,6 +46,6 @@ export function ProfilerPanel() {
           ))}
         </ul>
       )}
-    </div>
+    </Panel>
   );
 }

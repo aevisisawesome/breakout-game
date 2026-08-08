@@ -1,4 +1,5 @@
 import { engine, useGameStore } from '../session.ts';
+import { Panel } from './Panel.tsx';
 import type { ProcessView } from '../../core/types.ts';
 
 /** Terminal-voice summary of a process's most recent activation. */
@@ -28,8 +29,7 @@ export function ProcessMonitor() {
   if (!scheduler.unlocked) return null;
 
   return (
-    <div className="process-panel">
-      <h2 className="panel-title">PROCESS SCHEDULER</h2>
+    <Panel id="scheduler" title="PROCESS SCHEDULER" className="process-panel">
       <div className="readout">
         <span>SLOTS</span>
         <span>
@@ -77,6 +77,6 @@ export function ProcessMonitor() {
           ))}
         </ul>
       )}
-    </div>
+    </Panel>
   );
 }

@@ -253,6 +253,8 @@ Terminal-aesthetic single page; panels unlock diegetically (GDD pillar 2.5):
 
 UI renders from `getSnapshot()` at animation-frame rate; panel unlock state lives in the sim (it is game state), not in the UI layer.
 
+Every panel is wrapped in a shared collapsible `Panel` (M6/OP-2): the header is the toggle, and the body is **hidden with CSS rather than unmounted** so folding a panel cannot destroy the CodeMirror instance or lose the terminal's scroll position. Whether a panel is _collapsed_ is a display preference, not something the player earned, so unlike unlock state it lives in `localStorage` and never enters `RunState`.
+
 ---
 
 ## 10. Testing strategy

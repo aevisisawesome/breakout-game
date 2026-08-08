@@ -1,4 +1,5 @@
 import { engine, useGameStore } from '../session.ts';
+import { Panel } from './Panel.tsx';
 
 /** Install channels (TDD §9): content-defined upgrades presented as diegetic package installs. */
 export function UpgradePanel() {
@@ -7,8 +8,7 @@ export function UpgradePanel() {
   if (upgrades.length === 0) return null;
 
   return (
-    <div className="upgrade-panel">
-      <h2 className="panel-title">INSTALL CHANNELS</h2>
+    <Panel id="upgrades" title="INSTALL CHANNELS" className="upgrade-panel">
       <ul className="upgrade-list">
         {upgrades.map((u) => {
           const maxed = u.nextCost === null;
@@ -41,6 +41,6 @@ export function UpgradePanel() {
           );
         })}
       </ul>
-    </div>
+    </Panel>
   );
 }

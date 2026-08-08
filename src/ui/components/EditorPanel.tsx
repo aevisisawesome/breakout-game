@@ -6,6 +6,7 @@ import { EditorView, keymap, lineNumbers, placeholder } from '@codemirror/view';
 
 import { cclExtensions, type CclApiSource, type CclConstructs } from '../ccl-editor.ts';
 import { engine, useGameStore } from '../session.ts';
+import { Panel } from './Panel.tsx';
 import { TemplateLibrary } from './TemplateLibrary.tsx';
 import type { CclActionReport } from '../../core/types.ts';
 
@@ -140,14 +141,17 @@ export function EditorPanel() {
   };
 
   return (
-    <div className="editor-panel">
-      <div className="editor-head">
-        <h2 className="panel-title editor-title">CCL PROCESS EDITOR</h2>
+    <Panel
+      id="editor"
+      title="CCL PROCESS EDITOR"
+      className="editor-panel"
+      aside={
         <span className="terminal-dim editor-budget">
           OP BUDGET {ccl.maxOpsPerActivation}
           {ccl.constructs.loops && ` // ITERATION LIMIT ${ccl.iterationLimit}`}
         </span>
-      </div>
+      }
+    >
       <div ref={containerRef} className="editor-host" />
       <div className="editor-actions">
         <button type="button" className="editor-run" onClick={handleRun}>
@@ -191,6 +195,6 @@ export function EditorPanel() {
           </dl>
         )}
       </div>
-    </div>
+    </Panel>
   );
 }

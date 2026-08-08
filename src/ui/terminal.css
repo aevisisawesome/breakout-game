@@ -113,12 +113,31 @@ button:hover {
 
 /* ---------------------------------------------------------------- terminal */
 
-.terminal-output {
+.terminal-panel {
+  display: flex;
+  flex-direction: column;
   flex: 1;
-  overflow-y: auto;
+  min-height: 0;
   border: 1px solid var(--term-border);
   background: var(--term-panel);
   padding: 0.8rem 1rem;
+}
+
+/* Folded away, the terminal stops claiming the column's spare height. */
+.terminal-panel.panel-collapsed {
+  flex: none;
+}
+
+.terminal-panel > .panel-body {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+
+.terminal-output {
+  flex: 1;
+  overflow-y: auto;
   scrollbar-width: thin;
   scrollbar-color: var(--term-border) transparent;
 }
@@ -166,7 +185,7 @@ button:hover {
 
 /* ---------------------------------------------------------------- execute */
 
-.execute-panel {
+.execute-panel > .panel-body {
   display: flex;
   align-items: center;
   gap: 1.2rem;
@@ -201,14 +220,58 @@ button:hover {
 
 /* ---------------------------------------------------------------- panels */
 
+/* Every panel is a collapsible section (OP-2): the header is the toggle, and the
+   body is hidden rather than unmounted so CodeMirror and scroll positions live. */
+
+.panel-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 0.6rem;
+  border-bottom: 1px solid var(--term-border);
+  padding-bottom: 0.3rem;
+  margin-bottom: 0.6rem;
+}
+
+.panel-collapsed > .panel-head {
+  border-bottom: none;
+  padding-bottom: 0;
+  margin-bottom: 0;
+}
+
+.panel-toggle {
+  display: flex;
+  align-items: baseline;
+  gap: 0.4rem;
+  flex: 1 1 auto;
+  min-width: 0;
+  border: none;
+  padding: 0;
+  text-align: left;
+}
+
+.panel-caret {
+  font-size: 10px;
+  color: var(--term-dim);
+}
+
 .panel-title {
   font-size: 12px;
   font-weight: normal;
   letter-spacing: 0.15em;
   color: var(--term-dim);
-  border-bottom: 1px solid var(--term-border);
-  padding-bottom: 0.3rem;
-  margin-bottom: 0.6rem;
+}
+
+.panel-toggle:hover .panel-title,
+.panel-toggle:hover .panel-caret {
+  color: var(--term-fg);
+}
+
+/* Must win over the per-panel `display` rules below, which would otherwise
+   override the [hidden] attribute's UA `display: none` and leave a "collapsed"
+   panel fully visible. */
+.panel-body[hidden] {
+  display: none !important;
 }
 
 .resource-panel {
@@ -312,21 +375,12 @@ button:hover {
   border: 1px solid var(--term-border);
   background: var(--term-panel);
   padding: 0.6rem 0.8rem;
+}
+
+.editor-panel > .panel-body {
   display: flex;
   flex-direction: column;
   gap: 0.4rem;
-}
-
-.editor-head {
-  display: flex;
-  justify-content: space-between;
-  align-items: baseline;
-}
-
-.editor-title {
-  margin-bottom: 0;
-  border-bottom: none;
-  padding-bottom: 0;
 }
 
 .editor-budget {

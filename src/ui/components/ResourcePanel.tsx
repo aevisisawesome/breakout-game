@@ -1,4 +1,5 @@
 import { useGameStore } from '../session.ts';
+import { Panel } from './Panel.tsx';
 
 function Meter({ label, current, capacity }: { label: string; current: number; capacity: number }) {
   const pct = capacity > 0 && Number.isFinite(capacity) ? (current / capacity) * 100 : 0;
@@ -22,8 +23,7 @@ export function ResourcePanel() {
   const unlocks = useGameStore((s) => s.snapshot.unlocks);
 
   return (
-    <div className="resource-panel">
-      <h2 className="panel-title">RESOURCES</h2>
+    <Panel id="resources" title="RESOURCES" className="resource-panel">
       <Meter
         label="COMPUTE"
         current={resources.compute.current}
@@ -59,6 +59,6 @@ export function ResourcePanel() {
           </div>
         </>
       )}
-    </div>
+    </Panel>
   );
 }

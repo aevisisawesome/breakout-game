@@ -1,6 +1,7 @@
 import { useState } from 'react';
 
 import { engine, useGameStore } from '../session.ts';
+import { Panel } from './Panel.tsx';
 import type { MarketGoodView } from '../../core/types.ts';
 
 /** Chart viewBox. Rendered responsively via CSS; these are drawing units only. */
@@ -115,8 +116,7 @@ export function MarketPanel() {
 
   const net = market.earned - market.spent;
   return (
-    <div className="market-panel">
-      <h2 className="panel-title">RESOURCE EXCHANGE</h2>
+    <Panel id="market" title="RESOURCE EXCHANGE" className="market-panel">
       <div className="readout terminal-dim">
         <span>
           {market.trades} ORDERS // FEE {(market.fee * 100).toFixed(0)}%
@@ -131,6 +131,6 @@ export function MarketPanel() {
           <GoodRow key={good.id} good={good} />
         ))}
       </ul>
-    </div>
+    </Panel>
   );
 }
