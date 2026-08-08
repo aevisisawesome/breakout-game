@@ -19,7 +19,7 @@ function scriptEngine(setup?: (run: RunState) => void, seed = 42): GameEngine {
   run.jobs.waiting = 10;
   setup?.(run);
   const engine = createGameEngine(seed);
-  engine.load({ version: 4, savedAt: 0, meta: newMetaState(), run });
+  engine.load({ version: 5, savedAt: 0, meta: newMetaState(), run });
   return engine;
 }
 

@@ -41,6 +41,9 @@ function isRecord(value: unknown): value is Record<string, unknown> {
  *               (false; the unlock check re-fires from lifetime jobs on the next tick).
  * v3 → v4 (M4): adds `run.scheduler` (deployments), `run.flags` (narrative milestones)
  *               and the `conditions`/`scheduler` unlocks (likewise re-derived on tick).
+ * v4 → v5 (M5): adds `run.telemetry` (execution log), `run.ccl.manual` (RUN totals),
+ *               the `instrumentation`/`loops` unlocks, and per-process `samples`/`calls`
+ *               plus the abort breakdown that replaces the single `aborts` total.
  */
 function migrateSave(parsed: unknown): unknown {
   if (!isRecord(parsed)) return parsed;
@@ -65,13 +68,48 @@ function migrateSave(parsed: unknown): unknown {
     }
     parsed.version = 4;
   }
+  if (parsed.version === 4 && isRecord(parsed.run)) {
+    const run = parsed.run;
+    run.telemetry = { log: [], nextLogId: 1 };
+    if (isRecord(run.ccl)) {
+      run.ccl.manual = {
+        activations: 0,
+        opsTotal: 0,
+        computeTotal: 0,
+        commandCalls: 0,
+        commandFailures: 0,
+      };
+    }
+    if (isRecord(run.unlocks)) {
+      run.unlocks.instrumentation = false;
+      run.unlocks.loops = false;
+    }
+    // The single `aborts` total becomes a per-cause breakdown; the old sum cannot
+    // be split, so the counters restart rather than being attributed wrongly.
+    if (isRecord(run.scheduler) && Array.isArray(run.scheduler.deployments)) {
+      for (const deployment of run.scheduler.deployments) {
+        if (!isRecord(deployment) || !Array.isArray(deployment.processes)) continue;
+        for (const process of deployment.processes) {
+          if (!isRecord(process)) continue;
+          delete process.aborts;
+          process.samples = 0;
+          process.calls = 0;
+          process.abortsBudget = 0;
+          process.abortsFuel = 0;
+          process.abortsFault = 0;
+          process.lastErrorLine = null;
+        }
+      }
+    }
+    parsed.version = 5;
+  }
   return parsed;
 }
 
 /** Structural validation — enough to reject corrupt/foreign files, not a full schema. */
 export function isSaveFile(value: unknown): value is SaveFile {
   if (!isRecord(value)) return false;
-  if (value.version !== 4) return false;
+  if (value.version !== 5) return false;
   if (typeof value.savedAt !== 'number') return false;
   const meta = value.meta;
   if (!isRecord(meta) || typeof meta.forkCount !== 'number') return false;
@@ -82,6 +120,7 @@ export function isSaveFile(value: unknown): value is SaveFile {
   if (!isRecord(run.upgrades) || !isRecord(run.workers)) return false;
   if (!isRecord(run.ccl) || typeof run.ccl.editorSource !== 'string') return false;
   if (!isRecord(run.scheduler) || !Array.isArray(run.scheduler.deployments)) return false;
+  if (!isRecord(run.telemetry) || !Array.isArray(run.telemetry.log)) return false;
   if (!Array.isArray(run.flags)) return false;
   if (!Array.isArray(run.terminal) || !Array.isArray(run.research)) return false;
   return true;

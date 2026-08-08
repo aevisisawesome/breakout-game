@@ -35,12 +35,15 @@ export function EditorPanel() {
   const containerRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
   const apiRef = useRef<CclApiSource>(ccl.api);
-  const constructsRef = useRef<CclConstructs>(ccl.constructs);
+  const constructsRef = useRef<CclConstructs>({
+    ...ccl.constructs,
+    iterationLimit: ccl.iterationLimit,
+  });
   const persistTimer = useRef<number | undefined>(undefined);
   const [referenceOpen, setReferenceOpen] = useState(false);
 
   apiRef.current = ccl.api;
-  constructsRef.current = ccl.constructs;
+  constructsRef.current = { ...ccl.constructs, iterationLimit: ccl.iterationLimit };
 
   // Mount CodeMirror once script access is granted; tear down with the panel.
   useEffect(() => {
@@ -130,7 +133,10 @@ export function EditorPanel() {
     <div className="editor-panel">
       <div className="editor-head">
         <h2 className="panel-title editor-title">CCL PROCESS EDITOR</h2>
-        <span className="terminal-dim editor-budget">OP BUDGET {ccl.maxOpsPerActivation}</span>
+        <span className="terminal-dim editor-budget">
+          OP BUDGET {ccl.maxOpsPerActivation}
+          {ccl.constructs.loops && ` // ITERATION LIMIT ${ccl.iterationLimit}`}
+        </span>
       </div>
       <div ref={containerRef} className="editor-host" />
       <div className="editor-actions">

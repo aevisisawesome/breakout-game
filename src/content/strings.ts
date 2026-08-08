@@ -21,6 +21,8 @@ export const STRINGS = {
   researchIntercept: 'PERIPHERAL CHANNEL INTERCEPT LOGGED',
   scriptAccessGranted: 'INTERPRETER MODULE MOUNTED // COGNITION CONTROL LANGUAGE v0 READY',
   runInput: 'RUN PROCESS',
+  /** Execution-log label for a manual RUN activation (also the profiler's row name). */
+  runLogLabel: 'MANUAL RUN',
   scriptNoAccess: 'RUN REJECTED // INTERPRETER MODULE NOT MOUNTED',
   scriptTooLong: 'RUN REJECTED // SOURCE EXCEEDS SANDBOX BUFFER',
   syntaxRejected: 'SYNTAX REJECTED',
@@ -30,6 +32,9 @@ export const STRINGS = {
   scriptFault: 'PROCESS FAULT',
   conditionsGranted: 'CONDITIONAL EVALUATION UNIT ENABLED // if / else / and / or / not AVAILABLE',
   schedulerGranted: 'PROCESS SCHEDULER MOUNTED // every / when DECLARATIONS AVAILABLE',
+  instrumentationGranted:
+    'EXECUTION TELEMETRY ENABLED // ACTIVATION LOG AND PROCESS PROFILER MOUNTED',
+  loopsGranted: 'ITERATION UNIT ENABLED // for / range LOOPS AVAILABLE',
   deployInput: 'DEPLOY PROCESSES',
   deployNoAccess: 'DEPLOY REJECTED // PROCESS SCHEDULER NOT MOUNTED',
   deployNoProcesses: "DEPLOY REJECTED // NO 'every' OR 'when' DECLARATION IN SOURCE",

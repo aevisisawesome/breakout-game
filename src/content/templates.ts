@@ -8,7 +8,7 @@
  */
 
 /** Language tier a template needs before it can be offered. */
-export type TemplateTier = 'conditions' | 'scheduling';
+export type TemplateTier = 'conditions' | 'scheduling' | 'loops';
 
 export interface TemplateParam {
   /** Placeholder name: `{{id}}` in the source. */
@@ -71,6 +71,27 @@ export const TEMPLATES: readonly TemplateDef[] = [
     source: [
       'when stats.compute_available < {{floor}} and stats.cash > {{reserve}} {',
       '  buy_compute({{units}})',
+      '}',
+      '',
+    ].join('\n'),
+  },
+  {
+    id: 'batch-drain',
+    name: 'BATCH DRAIN',
+    desc: 'Clear several queued requests per activation, stopping short of a compute reserve.',
+    requires: 'loops',
+    params: [
+      { id: 'interval', label: 'INTERVAL (SECONDS)', min: 0.5, max: 60, step: 0.5, default: 3 },
+      { id: 'repeats', label: 'REQUESTS PER ACTIVATION', min: 1, max: 10, step: 1, default: 5 },
+      { id: 'reserve', label: 'COMPUTE RESERVE', min: 0, max: 400, step: 5, default: 30 },
+    ],
+    source: [
+      'every {{interval}} seconds {',
+      '  for i in range({{repeats}}) {',
+      '    if stats.compute_available > {{reserve}} {',
+      '      process_job()',
+      '    }',
+      '  }',
       '}',
       '',
     ].join('\n'),

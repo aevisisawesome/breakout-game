@@ -34,6 +34,10 @@ export interface DerivedStats {
   energyDrainPerSec: number;
   /** Scheduler slots available for deployed processes (M4, TDD §5.3). */
   schedulerSlots: number;
+  /** Op-unit budget per script activation (M5, TDD §5.2 "upgradeable"). */
+  maxOpsPerActivation: number;
+  /** Largest `range(n)` the parser accepts (M5, GDD tier 6). */
+  iterationLimit: number;
 }
 
 export function computeDerived(
@@ -48,6 +52,8 @@ export function computeDerived(
   let regenAdd = 0;
   let ramUsed = 0;
   let slotAdd = 0;
+  let opBudgetAdd = 0;
+  let iterationMult = 1;
 
   for (const def of UPGRADES) {
     const owned = upgrades[def.id] ?? 0;
@@ -76,6 +82,12 @@ export function computeDerived(
       case 'schedulerSlotAdd':
         slotAdd += effect.slots * owned;
         break;
+      case 'opBudgetAdd':
+        opBudgetAdd += effect.ops * owned;
+        break;
+      case 'iterationLimitMult':
+        iterationMult *= Math.pow(effect.factor, owned);
+        break;
     }
   }
 
@@ -90,5 +102,7 @@ export function computeDerived(
     energyRegenPerSec: BALANCE.resources.energyRegenPerSec + regenAdd,
     energyDrainPerSec: workerCount * w.energyPerWorkerPerSec,
     schedulerSlots: BALANCE.scheduler.baseSlots + slotAdd,
+    maxOpsPerActivation: BALANCE.ccl.maxOpsPerActivation + opBudgetAdd,
+    iterationLimit: Math.round(BALANCE.ccl.iterationLimitBase * iterationMult),
   };
 }

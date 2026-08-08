@@ -304,6 +304,17 @@ function createActivation(host: CclHost, opBudget: number) {
         if (branch) for (const inner of branch) execStmt(inner);
         break;
       }
+      case 'for': {
+        // The repeat count passed the parse-time iteration limit, but the loop is
+        // still fuel-bounded: one op per iteration on top of the body, so a loop
+        // that outgrows the op budget is preempted rather than running long.
+        for (let i = 0; i < stmt.count; i++) {
+          charge();
+          env.set(stmt.name, i);
+          for (const inner of stmt.body) execStmt(inner);
+        }
+        break;
+      }
     }
   }
 

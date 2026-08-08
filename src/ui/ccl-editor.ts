@@ -102,8 +102,8 @@ const cclTheme = EditorView.theme(
 function cclLinter(constructs: () => CclConstructs) {
   return linter((view) => {
     const source = view.state.doc.toString();
-    const { conditions, scheduling } = constructs();
-    const { diagnostics } = parse(source, { conditions, scheduling });
+    const { conditions, scheduling, loops, iterationLimit } = constructs();
+    const { diagnostics } = parse(source, { conditions, scheduling, loops, iterationLimit });
     const max = source.length;
     return diagnostics.map((d): Diagnostic => ({
       from: Math.min(d.from, max),
@@ -122,16 +122,26 @@ export interface CclApiSource {
   commands: readonly CclApiCommandView[];
 }
 
-/** Language tiers the player has unlocked (snapshot `ccl.constructs`). */
+/**
+ * Language tiers the player has unlocked (snapshot `ccl.constructs`), plus the
+ * live iteration limit so the editor reports an over-long loop exactly as the
+ * engine would reject it.
+ */
 export interface CclConstructs {
   conditions: boolean;
   scheduling: boolean;
+  loops: boolean;
+  iterationLimit: number;
 }
 
+/** Tier flags that carry keyword completions. */
+type KeywordTier = 'conditions' | 'scheduling' | 'loops';
+
 /** Keyword completions per tier, so the list never offers a locked construct. */
-const TIER_KEYWORDS: Readonly<Record<keyof CclConstructs, readonly string[]>> = {
+const TIER_KEYWORDS: Readonly<Record<KeywordTier, readonly string[]>> = {
   conditions: ['if', 'else', 'and', 'or', 'not'],
   scheduling: ['every', 'when', 'seconds', 'ticks'],
+  loops: ['for', 'in', 'range'],
 };
 
 function cclCompletion(api: () => CclApiSource, constructs: () => CclConstructs) {
@@ -142,7 +152,7 @@ function cclCompletion(api: () => CclApiSource, constructs: () => CclConstructs)
         if (word === null && !context.explicit) return null;
         const { stats, commands } = api();
         const tiers = constructs();
-        const keywords = (Object.keys(TIER_KEYWORDS) as (keyof CclConstructs)[])
+        const keywords = (Object.keys(TIER_KEYWORDS) as KeywordTier[])
           .filter((tier) => tiers[tier])
           .flatMap((tier) => TIER_KEYWORDS[tier]);
         return {

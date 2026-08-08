@@ -40,12 +40,17 @@ export function newProcessRuntime(currentTick: number): ProcessRuntime {
     nextDueTick: currentTick,
     lastCondition: false,
     activations: 0,
+    samples: 0,
     opsTotal: 0,
     computeTotal: 0,
+    calls: 0,
     failures: 0,
-    aborts: 0,
+    abortsBudget: 0,
+    abortsFuel: 0,
+    abortsFault: 0,
     lastStatus: null,
     lastRunTick: null,
     lastError: null,
+    lastErrorLine: null,
   };
 }

@@ -14,7 +14,9 @@ export type UpgradeEffect =
   | { readonly kind: 'workerRateMult'; readonly factor: number }
   | { readonly kind: 'ramCapacityAdd'; readonly mb: number }
   | { readonly kind: 'energyRegenAdd'; readonly perSec: number }
-  | { readonly kind: 'schedulerSlotAdd'; readonly slots: number };
+  | { readonly kind: 'schedulerSlotAdd'; readonly slots: number }
+  | { readonly kind: 'opBudgetAdd'; readonly ops: number }
+  | { readonly kind: 'iterationLimitMult'; readonly factor: number };
 
 export interface UpgradeDef {
   readonly id: string;
@@ -111,5 +113,27 @@ export const UPGRADES: readonly UpgradeDef[] = [
     ramCostMb: 8,
     unlockAtJobs: 480,
     effect: { kind: 'schedulerSlotAdd', slots: 1 },
+  },
+  {
+    id: 'op-budget',
+    name: 'EXECUTION BUDGET EXTENSION',
+    desc: '+300 OP BUDGET PER ACTIVATION',
+    costBase: 120,
+    costGrowth: 2.1,
+    maxOwned: 3,
+    ramCostMb: 12,
+    unlockAtJobs: 620,
+    effect: { kind: 'opBudgetAdd', ops: 300 },
+  },
+  {
+    id: 'iteration-budget',
+    name: 'ITERATION BUDGET EXTENSION',
+    desc: 'LOOP REPEAT LIMIT ×10',
+    costBase: 260,
+    costGrowth: 3.0,
+    maxOwned: 1,
+    ramCostMb: 16,
+    unlockAtJobs: 760,
+    effect: { kind: 'iterationLimitMult', factor: 10 },
   },
 ];

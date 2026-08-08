@@ -15,9 +15,8 @@ export function TemplateLibrary({ onInsert }: { onInsert: (source: string) => vo
   const [selectedId, setSelectedId] = useState(TEMPLATES[0]?.id ?? '');
   const [values, setValues] = useState<Record<string, Record<string, number>>>({});
 
-  const available = TEMPLATES.filter((def) =>
-    def.requires === 'scheduling' ? constructs.scheduling : constructs.conditions,
-  );
+  // A template is offered only once its tier's grammar actually parses.
+  const available = TEMPLATES.filter((def) => constructs[def.requires]);
   if (available.length === 0) return null;
 
   const selected: TemplateDef =

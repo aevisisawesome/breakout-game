@@ -1,7 +1,8 @@
 /**
- * CCL recursive-descent parser (TDD §5.1) — M4 surface: assignments,
+ * CCL recursive-descent parser (TDD §5.1) — M5 surface: assignments,
  * command-call statements, arithmetic/comparison/logical expressions,
- * `stats.*` reads, `if`/`else`, and top-level `every`/`when` declarations.
+ * `stats.*` reads, `if`/`else`, `for i in range(n)`, and top-level
+ * `every`/`when` declarations.
  *
  * Constructs are unlock-gated: locked ones are recognised and explained rather
  * than misread. The caller (the engine, or the editor's linter via the snapshot)
@@ -26,6 +27,14 @@ export interface ParseOptions {
   conditions?: boolean;
   /** Tier 4: top-level `every N seconds` / `when expr` scheduled processes. */
   scheduling?: boolean;
+  /** Tier 6: `for i in range(n)` loops. */
+  loops?: boolean;
+  /**
+   * Largest `range(n)` accepted, checked at parse time so the limit is a visible
+   * progression gate rather than only a runtime failure (TDD §5.2). Defaults to
+   * uncapped, which is what recompiling an already-deployed script uses.
+   */
+  iterationLimit?: number;
 }
 
 export interface ParseResult {
@@ -53,6 +62,7 @@ const LOCKED_CONSTRUCTS: Partial<Record<Keyword, string>> = {
 /** Keywords unlocked by each tier — removed from LOCKED_CONSTRUCTS when granted. */
 const CONDITION_KEYWORDS: readonly Keyword[] = ['if', 'else', 'and', 'or', 'not'];
 const SCHEDULING_KEYWORDS: readonly Keyword[] = ['every', 'when', 'seconds', 'ticks'];
+const LOOP_KEYWORDS: readonly Keyword[] = ['for', 'in', 'range'];
 
 const COMPARISON_OPS = ['==', '!=', '<', '<=', '>', '>='] as const;
 
@@ -74,7 +84,9 @@ export function parse(source: string, options: ParseOptions = {}): ParseResult {
   const unlocked = new Set<Keyword>();
   if (options.conditions === true) for (const k of CONDITION_KEYWORDS) unlocked.add(k);
   if (options.scheduling === true) for (const k of SCHEDULING_KEYWORDS) unlocked.add(k);
+  if (options.loops === true) for (const k of LOOP_KEYWORDS) unlocked.add(k);
   const blocksAvailable = unlocked.size > 0;
+  const iterationLimit = options.iterationLimit ?? Number.POSITIVE_INFINITY;
 
   /** Locked-tier message for a keyword, or null when the player may use it. */
   const lockedMessage = (word: string): string | null => {
@@ -172,7 +184,7 @@ export function parse(source: string, options: ParseOptions = {}): ParseResult {
     if (atOp('{') || atOp('}')) {
       throw issue(
         blocksAvailable
-          ? "Code blocks '{ }' can only follow 'if', 'else', 'every' or 'when'."
+          ? "Code blocks '{ }' can only follow 'if', 'else', 'for', 'every' or 'when'."
           : "Code blocks '{ }' belong to constructs this process has not unlocked yet.",
         token.span,
       );
@@ -366,6 +378,75 @@ export function parse(source: string, options: ParseOptions = {}): ParseResult {
     return { kind: 'if', cond, then, otherwise, span: mergeSpan(start.span, end) };
   }
 
+  /**
+   * `for i in range(n) { … }` (tier 6). `range` takes a plain whole number, not
+   * an expression: the repeat count has to be readable at parse time for the
+   * iteration limit to be a compile-time gate (TDD §5.2).
+   */
+  function parseFor(): Stmt {
+    const start = next(); // consume 'for'
+    const name = peek();
+    if (name.kind !== 'ident') {
+      throw issue(
+        `'for' needs a name to count with, like: for i in range(5) — found ${describe(name)}.`,
+        name.span,
+      );
+    }
+    next();
+    if (!atKeyword('in')) {
+      throw issue(
+        `Expected 'in' after '${name.text}', like: for ${name.text} in range(5) — found ${describe(peek())}.`,
+        peek().span,
+      );
+    }
+    next();
+    if (!atKeyword('range')) {
+      throw issue(
+        `A loop repeats a fixed number of times, written as range(5) — found ${describe(peek())}.`,
+        peek().span,
+      );
+    }
+    next();
+    if (!atOp('(')) {
+      throw issue(`Expected '(' after 'range' — found ${describe(peek())}.`, peek().span);
+    }
+    next();
+    const countToken = peek();
+    if (countToken.kind !== 'number') {
+      throw issue(
+        `range(...) needs a plain number of repeats, like range(5) — found ${describe(countToken)}.`,
+        countToken.span,
+      );
+    }
+    next();
+    const count = countToken.value as number;
+    if (!Number.isInteger(count) || count < 1) {
+      throw issue('range(...) needs a whole number of repeats, at least 1.', countToken.span);
+    }
+    if (count > iterationLimit) {
+      throw issue(
+        `This process can repeat at most ${iterationLimit} times, and this loop asks for ${count}. Raise the iteration limit, or split the work across more activations.`,
+        countToken.span,
+      );
+    }
+    if (!atOp(')')) {
+      throw issue(
+        `Expected a closing ')' after the number — found ${describe(peek())}.`,
+        peek().span,
+      );
+    }
+    next();
+    const body = parseBlock('for');
+    return {
+      kind: 'for',
+      name: name.text,
+      nameSpan: name.span,
+      count,
+      body,
+      span: mergeSpan(start.span, lastBlockEnd),
+    };
+  }
+
   /** Source text of a declaration header, used as the process label in the monitor. */
   function headerText(from: number, to: number): string {
     return source.slice(from, to).replace(/\s+/g, ' ').trim();
@@ -423,6 +504,7 @@ export function parse(source: string, options: ParseOptions = {}): ParseResult {
       const locked = lockedMessage(token.text);
       if (locked) throw issue(locked, token.span);
       if (token.text === 'if') return parseIf();
+      if (token.text === 'for') return parseFor();
       if (token.text === 'else') {
         throw issue("'else' can only follow an 'if' block.", token.span);
       }

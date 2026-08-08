@@ -16,7 +16,7 @@ function engineWith(setup: (run: RunState) => void, seed = 42): GameEngine {
   const run = newRunState(seed);
   setup(run);
   const engine = createGameEngine(seed);
-  engine.load({ version: 4, savedAt: 0, meta: newMetaState(), run });
+  engine.load({ version: 5, savedAt: 0, meta: newMetaState(), run });
   return engine;
 }
 
@@ -266,19 +266,34 @@ describe('save migration', () => {
     delete v1run.ccl;
     delete v1run.scheduler;
     delete v1run.flags;
+    delete v1run.telemetry;
     const v1 = { version: 1, savedAt: 123, meta: current.meta, run: v1run };
     const text = serializeSave(v1 as unknown as SaveFile);
 
     const restored = deserializeSave(text);
     expect(restored).not.toBeNull();
-    expect(restored!.version).toBe(4);
+    expect(restored!.version).toBe(5);
     expect(restored!.run.upgrades).toEqual({});
     expect(restored!.run.workers).toEqual({ processAccumulator: 0, overclockRemainingSec: 0 });
-    expect(restored!.run.ccl).toEqual({ editorSource: '', runCount: 0, lastRun: null });
+    expect(restored!.run.ccl).toEqual({
+      editorSource: '',
+      runCount: 0,
+      lastRun: null,
+      manual: {
+        activations: 0,
+        opsTotal: 0,
+        computeTotal: 0,
+        commandCalls: 0,
+        commandFailures: 0,
+      },
+    });
     expect(restored!.run.scheduler).toEqual({ deployments: [], nextId: 1 });
+    expect(restored!.run.telemetry).toEqual({ log: [], nextLogId: 1 });
     expect(restored!.run.flags).toEqual([]);
     expect(restored!.run.unlocks.editor).toBe(false);
     expect(restored!.run.unlocks.scheduler).toBe(false);
+    expect(restored!.run.unlocks.instrumentation).toBe(false);
+    expect(restored!.run.unlocks.loops).toBe(false);
 
     // And a fresh engine accepts the migrated file.
     const engineB = createGameEngine(1);

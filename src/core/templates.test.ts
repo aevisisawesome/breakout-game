@@ -7,6 +7,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { parse } from '../ccl/parser.ts';
+import { BALANCE } from '../content/balance.ts';
 import { TEMPLATES } from '../content/templates.ts';
 import { createGameEngine, newMetaState, newRunState } from './engine.ts';
 import { clampParam, renderTemplate, templateDefaults } from './templates.ts';
@@ -46,12 +47,16 @@ describe('renderTemplate', () => {
 });
 
 describe('every template compiles under its declared tier', () => {
+  /** All tiers granted, with the iteration limit a player has when loops unlock. */
+  const granted = {
+    conditions: true,
+    scheduling: true,
+    loops: true,
+    iterationLimit: BALANCE.ccl.iterationLimitBase,
+  };
+
   for (const def of TEMPLATES) {
     it(`${def.id} parses (requires ${def.requires})`, () => {
-      const options = {
-        conditions: true,
-        scheduling: def.requires === 'scheduling',
-      };
       // Defaults, and both extremes of every parameter.
       const cases = [
         templateDefaults(def),
@@ -60,15 +65,17 @@ describe('every template compiles under its declared tier', () => {
       ];
       for (const values of cases) {
         const source = renderTemplate(def, values);
-        const { program, diagnostics } = parse(source, options);
+        const { program, diagnostics } = parse(source, granted);
         expect(diagnostics).toEqual([]);
         expect(program).not.toBeNull();
-        if (def.requires === 'scheduling') {
-          expect(program!.processes.length).toBeGreaterThan(0);
-        } else {
-          expect(program!.statements.length).toBeGreaterThan(0);
-        }
+        expect(program!.statements.length + program!.processes.length).toBeGreaterThan(0);
       }
+    });
+
+    it(`${def.id} genuinely needs the tier it declares`, () => {
+      const source = renderTemplate(def, templateDefaults(def));
+      const withoutTier = { ...granted, [def.requires]: false };
+      expect(parse(source, withoutTier).diagnostics.length).toBeGreaterThan(0);
     });
   }
 });
@@ -83,7 +90,7 @@ describe('generated code is accepted by the engine', () => {
     run.resources.capital.current = 500;
     run.jobs.waiting = 30;
     const engine = createGameEngine(42);
-    engine.load({ version: 4, savedAt: 0, meta: newMetaState(), run });
+    engine.load({ version: 5, savedAt: 0, meta: newMetaState(), run });
 
     const def = TEMPLATES.find((t) => t.id === 'auto-processor')!;
     const source = renderTemplate(def, templateDefaults(def));

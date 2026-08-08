@@ -44,7 +44,12 @@ export type Stmt =
   | { kind: 'assign'; name: string; nameSpan: Span; value: Expr; span: Span }
   | { kind: 'expr'; expr: Expr; span: Span }
   /** `if cond { … } else { … }` — `else if` chains nest as a single-statement branch. */
-  | { kind: 'if'; cond: Expr; then: Stmt[]; otherwise: Stmt[] | null; span: Span };
+  | { kind: 'if'; cond: Expr; then: Stmt[]; otherwise: Stmt[] | null; span: Span }
+  /**
+   * `for i in range(n) { … }` (tier 6). `count` is a literal by grammar, which is
+   * what lets the parser check it against the player's iteration limit (TDD §5.2).
+   */
+  | { kind: 'for'; name: string; nameSpan: Span; count: number; body: Stmt[]; span: Span };
 
 /** Time unit of an `every` declaration; /core converts to ticks (it owns the timestep). */
 export type ScheduleUnit = 'seconds' | 'ticks';
@@ -114,6 +119,11 @@ export function countNodes(program: Program): number {
         walkExpr(stmt.cond);
         stmt.then.forEach(walkStmt);
         stmt.otherwise?.forEach(walkStmt);
+        break;
+      case 'for':
+        // The loop body is stored once regardless of the repeat count, so RAM
+        // prices the code, not the work it will do.
+        stmt.body.forEach(walkStmt);
         break;
     }
   };

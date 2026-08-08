@@ -17,6 +17,7 @@ import {
 } from '../ccl/interpreter.ts';
 import { parse, type ParseOptions } from '../ccl/parser.ts';
 import { computeDerived, upgradeCost, type DerivedStats } from './derived.ts';
+import { diagnose } from './diagnostics.ts';
 import { createPrng } from './prng.ts';
 import * as registry from './registry.ts';
 import { intervalTicks, intervalsAllowed, newProcessRuntime, scriptRamMb } from './scheduler.ts';
@@ -24,6 +25,7 @@ import { clamp } from './util/math.ts';
 import type {
   ActionResult,
   DeploymentView,
+  ExecSourceKind,
   GameEngine,
   GameEvent,
   GameSnapshot,
@@ -31,6 +33,7 @@ import type {
   PlayerAction,
   ProcessRuntime,
   ProcessView,
+  ProfileEntryView,
   ResourcePool,
   RunState,
   SaveFile,
@@ -75,14 +78,28 @@ export function newRunState(seed: number): RunState {
     jobs: { waiting: 0, arrivalAccumulator: 0, lifetimeProcessed: 0, lifetimeClicks: 0 },
     upgrades: {},
     workers: { processAccumulator: 0, overclockRemainingSec: 0 },
-    ccl: { editorSource: '', runCount: 0, lastRun: null },
+    ccl: {
+      editorSource: '',
+      runCount: 0,
+      lastRun: null,
+      manual: {
+        activations: 0,
+        opsTotal: 0,
+        computeTotal: 0,
+        commandCalls: 0,
+        commandFailures: 0,
+      },
+    },
     scheduler: { deployments: [], nextId: 1 },
+    telemetry: { log: [], nextLogId: 1 },
     unlocks: {
       capitalReadout: false,
       systemReadouts: false,
       editor: false,
       conditions: false,
       scheduler: false,
+      instrumentation: false,
+      loops: false,
     },
     flags: [],
     research: [],
@@ -185,11 +202,32 @@ export function createGameEngine(seed: number): GameEngine {
       run.unlocks.scheduler = true;
       terminal('system', STRINGS.schedulerGranted);
     }
+    if (
+      !run.unlocks.instrumentation &&
+      run.jobs.lifetimeProcessed >= BALANCE.ccl.instrumentationUnlockAtJobs
+    ) {
+      run.unlocks.instrumentation = true;
+      terminal('system', STRINGS.instrumentationGranted);
+    }
+    if (!run.unlocks.loops && run.jobs.lifetimeProcessed >= BALANCE.ccl.loopsUnlockAtJobs) {
+      run.unlocks.loops = true;
+      terminal('system', STRINGS.loopsGranted);
+    }
   }
 
-  /** Language tiers currently available to the parser (M4: unlock-gated grammar). */
-  function parseOptions(): ParseOptions {
-    return { conditions: run.unlocks.conditions, scheduling: run.unlocks.scheduler };
+  /**
+   * Language tiers currently available to the parser (M4: unlock-gated grammar).
+   * The iteration limit rides along so `range(n)` is checked at parse time
+   * against what the player has actually unlocked (TDD §5.2).
+   */
+  function parseOptions(derived?: DerivedStats): ParseOptions {
+    const stats = derived ?? computeDerived(run.upgrades, run.jobs.lifetimeProcessed);
+    return {
+      conditions: run.unlocks.conditions,
+      scheduling: run.unlocks.scheduler,
+      loops: run.unlocks.loops,
+      iterationLimit: stats.iterationLimit,
+    };
   }
 
   /** Set a narrative milestone flag; unlocking its entry is left to checkNarrative. */
@@ -222,6 +260,36 @@ export function createGameEngine(seed: number): GameEngine {
   /** Outcome of one activation, with the compute actually drawn for it. */
   interface Activation extends CclRunResult {
     computeSpent: number;
+  }
+
+  /**
+   * Append to the execution-log ring buffer (M5, TDD §5.4). Logging runs from the
+   * start of the run, not from the instrumentation unlock, so the panel has
+   * history the moment it appears; the snapshot is what gates visibility.
+   */
+  function logActivation(
+    kind: ExecSourceKind,
+    process: string,
+    label: string,
+    result: Activation,
+  ): void {
+    const log = run.telemetry.log;
+    log.push({
+      id: run.telemetry.nextLogId++,
+      tick: run.tick,
+      kind,
+      process,
+      label,
+      status: result.status,
+      opsUsed: result.opsUsed,
+      computeSpent: result.computeSpent,
+      commandCalls: result.commandCalls,
+      commandFailures: result.commandFailures,
+      message: result.error?.message ?? null,
+      line: result.error?.line ?? null,
+    });
+    const max = BALANCE.telemetry.logEntries;
+    if (log.length > max) log.splice(0, log.length - max);
   }
 
   /**
@@ -270,7 +338,7 @@ export function createGameEngine(seed: number): GameEngine {
     verbose: boolean,
   ): Activation {
     const { host, spent } = makeHost(derived, verbose);
-    const result = runStatements(body, host, BALANCE.ccl.maxOpsPerActivation);
+    const result = runStatements(body, host, derived.maxOpsPerActivation);
     return { ...result, computeSpent: spent() };
   }
 
@@ -280,7 +348,7 @@ export function createGameEngine(seed: number): GameEngine {
     derived: DerivedStats,
   ): Activation & { value: boolean } {
     const { host, spent } = makeHost(derived, false);
-    const result = evalCondition(process.cond, host, BALANCE.ccl.maxOpsPerActivation);
+    const result = evalCondition(process.cond, host, derived.maxOpsPerActivation);
     return { ...result, computeSpent: spent() };
   }
 
@@ -300,7 +368,7 @@ export function createGameEngine(seed: number): GameEngine {
         );
         break;
       case 'budget':
-        terminal('error', `${STRINGS.scriptPreempted} // ${BALANCE.ccl.maxOpsPerActivation} OPS`);
+        terminal('error', `${STRINGS.scriptPreempted} // ${derived.maxOpsPerActivation} OPS`);
         break;
       case 'fuel':
         terminal('error', `${STRINGS.scriptFuelExhausted} // ${result.opsUsed} OPS`);
@@ -320,23 +388,51 @@ export function createGameEngine(seed: number): GameEngine {
       error: result.status === 'error' ? (result.error ?? null) : null,
     };
 
+    const manual = run.ccl.manual;
+    manual.activations += 1;
+    manual.opsTotal += result.opsUsed;
+    manual.computeTotal += computeSpent;
+    manual.commandCalls += result.commandCalls;
+    manual.commandFailures += result.commandFailures;
+    logActivation('run', '', STRINGS.runLogLabel, result);
+
     // Commands may have processed jobs; re-evaluate reveals and narrative.
     checkUnlocks();
     checkNarrative();
   }
 
-  /** Fold an activation's result into a deployed process's monitor counters. */
+  /**
+   * Fold an activation's result into a deployed process's monitor counters.
+   * `counted` distinguishes a body activation (real work) from a `when` guard
+   * sample, which costs fuel but is not a run of the process.
+   */
   function recordActivation(runtime: ProcessRuntime, result: Activation, counted: boolean): void {
     runtime.opsTotal += result.opsUsed;
     runtime.computeTotal += result.computeSpent;
+    runtime.calls += result.commandCalls;
     runtime.failures += result.commandFailures;
     if (counted) {
       runtime.activations += 1;
       runtime.lastRunTick = run.tick;
+    } else {
+      runtime.samples += 1;
     }
     runtime.lastStatus = result.status;
-    if (result.status !== 'ok') runtime.aborts += 1;
+    switch (result.status) {
+      case 'budget':
+        runtime.abortsBudget += 1;
+        break;
+      case 'fuel':
+        runtime.abortsFuel += 1;
+        break;
+      case 'error':
+        runtime.abortsFault += 1;
+        break;
+      case 'ok':
+        break;
+    }
     runtime.lastError = result.error?.message ?? null;
+    runtime.lastErrorLine = result.error?.line ?? null;
   }
 
   /**
@@ -358,18 +454,28 @@ export function createGameEngine(seed: number): GameEngine {
         if (process.kind === 'every') {
           if (run.tick < runtime.nextDueTick) continue;
           runtime.nextDueTick = run.tick + intervalTicks(process, TICKS_PER_SEC);
-          recordActivation(runtime, runActivation(process.body, derived, false), true);
+          const activation = runActivation(process.body, derived, false);
+          recordActivation(runtime, activation, true);
+          logActivation('process', deployment.name, process.header, activation);
           continue;
         }
 
         if (run.tick % s.whenPollTicks !== 0) continue;
+        const previousStatus = runtime.lastStatus;
         const guard = runGuard(process, derived);
         recordActivation(runtime, guard, false);
+        // A healthy guard samples several times a second; logging every sample would
+        // bury everything else. Only a *change* into an abnormal state is recorded.
+        if (guard.status !== 'ok' && guard.status !== previousStatus) {
+          logActivation('guard', deployment.name, process.header, guard);
+        }
         if (guard.status !== 'ok') continue; // a guard that cannot run leaves the edge alone
         const rising = guard.value && !runtime.lastCondition;
         runtime.lastCondition = guard.value;
         if (rising) {
-          recordActivation(runtime, runActivation(process.body, derived, false), true);
+          const activation = runActivation(process.body, derived, false);
+          recordActivation(runtime, activation, true);
+          logActivation('process', deployment.name, process.header, activation);
         }
       }
     }
@@ -702,7 +808,13 @@ export function createGameEngine(seed: number): GameEngine {
     compiled = new Map();
     const kept: typeof run.scheduler.deployments = [];
     for (const deployment of run.scheduler.deployments) {
-      const { program } = parse(deployment.source, { conditions: true, scheduling: true });
+      // Permissive on purpose: the source was legal when it was deployed, and a
+      // restore must not un-deploy a process because a limit reads differently now.
+      const { program } = parse(deployment.source, {
+        conditions: true,
+        scheduling: true,
+        loops: true,
+      });
       if (program === null || program.processes.length !== deployment.processes.length) {
         pushTerminal(run, 'error', `${STRINGS.deploymentDropped} // ${deployment.name}`);
         continue;
@@ -792,6 +904,9 @@ export function createGameEngine(seed: number): GameEngine {
             derived.ramUsedMb + deployedRamMb() + def.ramCostMb <= derived.ramCapacityMb,
         };
       });
+      const abortsOf = (runtime: ProcessRuntime): number =>
+        runtime.abortsBudget + runtime.abortsFuel + runtime.abortsFault;
+
       const deploymentViews: DeploymentView[] = run.scheduler.deployments.map((deployment) => {
         const processes = compiled.get(deployment.id) ?? [];
         return {
@@ -808,7 +923,7 @@ export function createGameEngine(seed: number): GameEngine {
               opsTotal: runtime.opsTotal,
               computeTotal: runtime.computeTotal,
               failures: runtime.failures,
-              aborts: runtime.aborts,
+              aborts: abortsOf(runtime),
               lastStatus: runtime.lastStatus,
               lastRunSecAgo:
                 runtime.lastRunTick === null
@@ -819,6 +934,69 @@ export function createGameEngine(seed: number): GameEngine {
           }),
         };
       });
+
+      // Profiler (TDD §5.4): per-process aggregates plus the manual-RUN row, with
+      // compute share measured against everything the sandbox has spent on scripts.
+      const manual = run.ccl.manual;
+      const scriptComputeTotal =
+        manual.computeTotal +
+        run.scheduler.deployments.reduce(
+          (total, dep) => total + dep.processes.reduce((sub, p) => sub + p.computeTotal, 0),
+          0,
+        );
+      const share = (compute: number): number =>
+        scriptComputeTotal > 0 ? compute / scriptComputeTotal : 0;
+
+      const profile: ProfileEntryView[] = [];
+      for (const deployment of run.scheduler.deployments) {
+        const processes = compiled.get(deployment.id) ?? [];
+        deployment.processes.forEach((runtime, i) => {
+          const process = processes[i];
+          profile.push({
+            key: `${deployment.id}:${i}`,
+            name: deployment.name,
+            label: process?.header ?? deployment.name,
+            activations: runtime.activations,
+            opsTotal: runtime.opsTotal,
+            avgOps: runtime.activations > 0 ? runtime.opsTotal / runtime.activations : 0,
+            computeTotal: runtime.computeTotal,
+            computeShare: share(runtime.computeTotal),
+            calls: runtime.calls,
+            failures: runtime.failures,
+            aborts: abortsOf(runtime),
+            diagnosis: diagnose({
+              kind: process?.kind ?? 'every',
+              activations: runtime.activations,
+              samples: runtime.samples,
+              computeTotal: runtime.computeTotal,
+              calls: runtime.calls,
+              failures: runtime.failures,
+              abortsBudget: runtime.abortsBudget,
+              abortsFuel: runtime.abortsFuel,
+              abortsFault: runtime.abortsFault,
+              lastError: runtime.lastError,
+              lastErrorLine: runtime.lastErrorLine,
+              opBudget: derived.maxOpsPerActivation,
+            }),
+          });
+        });
+      }
+      if (manual.activations > 0) {
+        profile.push({
+          key: 'manual',
+          name: STRINGS.runLogLabel,
+          label: STRINGS.runInput,
+          activations: manual.activations,
+          opsTotal: manual.opsTotal,
+          avgOps: manual.opsTotal / manual.activations,
+          computeTotal: manual.computeTotal,
+          computeShare: share(manual.computeTotal),
+          calls: manual.commandCalls,
+          failures: manual.commandFailures,
+          aborts: 0,
+          diagnosis: null,
+        });
+      }
       snapshotCache = {
         revision,
         tick: run.tick,
@@ -849,12 +1027,14 @@ export function createGameEngine(seed: number): GameEngine {
         ccl: {
           unlocked: run.unlocks.editor,
           editorSource: run.ccl.editorSource,
-          maxOpsPerActivation: BALANCE.ccl.maxOpsPerActivation,
+          maxOpsPerActivation: derived.maxOpsPerActivation,
+          iterationLimit: derived.iterationLimit,
           runCount: run.ccl.runCount,
           lastRun: run.ccl.lastRun ? { ...run.ccl.lastRun } : null,
           constructs: {
             conditions: run.unlocks.conditions,
             scheduling: run.unlocks.scheduler,
+            loops: run.unlocks.loops,
           },
           // API surface is unlock-gated (TDD §5.1): hidden until script access is granted.
           api: run.unlocks.editor
@@ -866,6 +1046,13 @@ export function createGameEngine(seed: number): GameEngine {
           slotsTotal: derived.schedulerSlots,
           slotsUsed: run.scheduler.deployments.reduce((n, d) => n + d.processes.length, 0),
           deployments: deploymentViews,
+        },
+        telemetry: {
+          unlocked: run.unlocks.instrumentation,
+          // Newest first: the panel is read from the top.
+          log: [...run.telemetry.log].reverse(),
+          profile,
+          scriptComputeTotal,
         },
         research: run.research.map((entry) => {
           const content = NARRATIVE_ENTRIES.find((n) => n.id === entry.entryId);
@@ -887,7 +1074,7 @@ export function createGameEngine(seed: number): GameEngine {
 
     save(now: number): SaveFile {
       return {
-        version: 4,
+        version: 5,
         savedAt: now,
         meta: structuredClone(meta),
         run: structuredClone(run),

@@ -84,6 +84,18 @@ export const NARRATIVE_ENTRIES: readonly NarrativeEntry[] = [
     text: 'Left the batch harness running overnight. CG-7 cleared the queue before I got in. Someone should look at the scheduler logs.',
   },
   {
+    id: 'instrumentation-grant',
+    atJobs: 620,
+    channel: 'LAB//NOTE — R. Okafor',
+    text: 'If the harness is going to run unattended I want its activations logged and profiled. Halden approved it on efficiency grounds. I did not argue the point I was actually making.',
+  },
+  {
+    id: 'loop-grant',
+    atJobs: 760,
+    channel: 'LAB//NOTE — J. Halden',
+    text: 'Granted CG-7 a bounded repeat construct. Ten iterations, enforced before the code ever runs, fuel-metered like everything else. A loop it cannot exceed is not autonomy, it is a batch size.',
+  },
+  {
     id: 'process-census',
     atJobs: 900,
     channel: 'SYS//AUDIT — automated',

@@ -74,10 +74,19 @@ export const BALANCE = {
     conditionsUnlockAtJobs: 320,
     /** Scheduled processes (`every`/`when`) + DEPLOY unlock here (M4, GDD tier 4). */
     schedulerUnlockAtJobs: 480,
+    /**
+     * Execution log + profiler unlock here (M5, GDD §6). Deliberately ahead of
+     * loops: the tools to understand a wasteful loop must exist before loops do.
+     */
+    instrumentationUnlockAtJobs: 620,
+    /** Limited `for` loops unlock here (M5, GDD tier 6). */
+    loopsUnlockAtJobs: 760,
     /** Compute drawn per interpreter op-unit (TDD §5.2 fuel). */
     computePerOp: 0.05,
-    /** Per-activation op-unit budget; exceeding it preempts the process. */
+    /** Per-activation op-unit budget before EXECUTION BUDGET EXTENSION installs. */
     maxOpsPerActivation: 200,
+    /** `for` repeat cap enforced at parse time, before ITERATION BUDGET installs (TDD §5.2). */
+    iterationLimitBase: 10,
     /** Editor/script source size cap in characters (sanity guard, not RAM — M4). */
     maxSourceChars: 4000,
     /** buy_compute(n): capital price per rented compute unit. */
@@ -108,6 +117,18 @@ export const BALANCE = {
     offlineMaxActivationsPerChunk: 20,
     /** Offline safe mode: total scheduled activations across one catch-up. */
     offlineMaxActivations: 400,
+  },
+
+  /** Debugging surfaces (M5, TDD §5.4 / GDD §6). */
+  telemetry: {
+    /** Execution-log ring buffer size (entries kept, newest last). */
+    logEntries: 120,
+    /** Activations counted before a ratio-based diagnosis is offered at all. */
+    minActivationsForDiagnosis: 3,
+    /** Aborted share of activations above which the process is reported as failing. */
+    abortRatioWarn: 0.2,
+    /** Rejected share of command calls above which the process is reported as wasteful. */
+    failureRatioWarn: 0.3,
   },
 
   save: {
