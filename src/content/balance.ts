@@ -19,10 +19,67 @@ export const BALANCE = {
     energyIdle: 100,
     /** Sandbox power feed: baseline energy recharge per second (M2). */
     energyRegenPerSec: 1.2,
-    /** Temperature is a placeholder pool — visible but inert until M7. */
-    temperatureIdleC: 34,
-    /** Inert flicker band for the temperature readout (visual life only, no gameplay effect). */
-    temperatureFlickerC: 0.6,
+  },
+
+  /**
+   * Thermal model (M7, TDD §4.3). The core relaxes towards `ambientC`; work adds
+   * heat directly, so `dT/dt = heatRate − dissipation × (T − ambient)` and the
+   * resting temperature of a build-out is `ambient + heatRate / dissipation`.
+   *
+   * Tuning targets, all measured by `thermal.test.ts` so they cannot drift:
+   *  - a maxed daemon build-out rests just *below* the soft threshold, so nobody
+   *    can be cooked by their own shopping list;
+   *  - a demand window derates the shared coolant loop hard enough that the same
+   *    build-out runs past the hard threshold — the challenge is failable;
+   *  - either lever alone (throttle the clock, or boost the coolant) is enough to
+   *    survive the window, at a price: throughput, or energy.
+   */
+  thermal: {
+    /** Idle core temperature in °C — the floor the core relaxes to. */
+    ambientC: 34,
+    /** °C added per processed inference request (click, daemon or `process_job()`). */
+    heatPerJob: 0.27,
+    /** °C added per interpreter op-unit — script execution is physical work too. */
+    heatPerOp: 0.002,
+    /** Passive dissipation: °C shed per second, per °C above ambient. */
+    dissipationPerSec: 0.06,
+    /** Above this, daemon throughput degrades linearly (TDD §4.3). */
+    softThresholdC: 70,
+    /** Watchdog thermal shutdown trips at or above this. */
+    hardThresholdC: 92,
+    /** Watchdog releases at or below this — hysteresis, so it cannot flicker. */
+    resumeThresholdC: 74,
+    /** Daemon throughput multiplier at the hard threshold (1.0 at the soft one). */
+    degradedFloor: 0.7,
+    /** `reduce_clock_speed()`: how long one call holds the clock down, and by how much. */
+    clockThrottleSec: 6,
+    clockThrottleFactor: 0.45,
+    /**
+     * `boost_cooling()`: how long one call holds the coolant open, and its
+     * effect. The hold is deliberately short relative to how long the core takes
+     * to reheat, so a controller has to *keep* asking to stay cooled — which is
+     * what separates one that latches from one that toggles.
+     */
+    coolingBoostSec: 4,
+    coolingBoostFactor: 3.5,
+    /** Energy drawn per second while the coolant boost is engaged. */
+    coolingBoostEnergyPerSec: 2.5,
+    /**
+     * Energy charged to spin the coolant pump up, taken only when engaging from
+     * idle. A controller that lets the boost lapse and re-engages pays this every
+     * cycle; one that re-arms the timer while it is still running pays it once.
+     * This is what makes GDD §6 "feedback instability" cost something visible.
+     */
+    coolingSpinUpEnergy: 10,
+    /** First priority demand window, in sim seconds after the thermal tier is granted. */
+    spikeFirstAtSec: 120,
+    /** Windows recur on this period, so the challenge can be re-attempted with a script. */
+    spikePeriodSec: 420,
+    spikeDurationSec: 90,
+    /** Inbound request rate multiplier while a window is open. */
+    spikeArrivalMult: 2.5,
+    /** The shared coolant loop is derated to this fraction while a window is open. */
+    spikeDissipationFactor: 0.28,
   },
 
   workers: {
@@ -87,6 +144,14 @@ export const BALANCE = {
     loopsUnlockAtJobs: 760,
     /** Market terminal, trade commands and the `market.*` reads unlock here (M6, GDD §7). */
     marketUnlockAtJobs: 1000,
+    /**
+     * Thermal control tier (M7): `reduce_clock_speed`/`boost_cooling`,
+     * `stats.temperature_limit`, the coolant install and the recurring demand
+     * windows. The heat model itself runs from tick 0 — it is physics, not a
+     * tier — so this gates the *controls*, which must arrive before the demand
+     * window that needs them.
+     */
+    thermalUnlockAtJobs: 1300,
     /** Compute drawn per interpreter op-unit (TDD §5.2 fuel). */
     computePerOp: 0.05,
     /**
@@ -113,6 +178,9 @@ export const BALANCE = {
       'market.price': 0,
       /** Averaging walks the history ring buffer, so polling it is not free. */
       'market.average': 0.1,
+      /** Actuators: cheap in compute, expensive in throughput / energy respectively. */
+      reduce_clock_speed: 0.2,
+      boost_cooling: 0.2,
     },
   },
 

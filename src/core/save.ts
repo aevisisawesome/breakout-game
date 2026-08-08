@@ -5,6 +5,7 @@
  * migrations are added, never edited.
  */
 
+import { BALANCE } from '../content/balance.ts';
 import type { SaveFile } from './types.ts';
 
 const INFINITY_SENTINEL = '__INFINITY__';
@@ -46,6 +47,8 @@ function isRecord(value: unknown): value is Record<string, unknown> {
  *               plus the abort breakdown that replaces the single `aborts` total.
  * v5 → v6 (M6): adds `run.market` (null until mounted) and `run.unlocks.market`
  *               (false; re-derived from lifetime jobs on the next tick).
+ * v6 → v7 (M7): adds `run.thermal` (always present — the heat model runs from
+ *               tick 0) and `run.unlocks.thermal` (false; likewise re-derived).
  */
 function migrateSave(parsed: unknown): unknown {
   if (!isRecord(parsed)) return parsed;
@@ -121,13 +124,39 @@ function migrateSave(parsed: unknown): unknown {
     }
     parsed.version = 6;
   }
+  if (parsed.version === 6 && isRecord(parsed.run)) {
+    const run = parsed.run;
+    // `openedAtTick` stays null so the unlock check re-derives the grant from
+    // lifetime jobs, re-fires its line, and schedules the demand windows from
+    // the moment the player actually reaches the tier.
+    run.thermal = {
+      clockTicks: 0,
+      openedAtTick: null,
+      throttleRemainingSec: 0,
+      boostRemainingSec: 0,
+      halted: false,
+      shutdowns: 0,
+      boostEngagements: 0,
+      coolingEnergySpent: 0,
+      demandWindowOpen: false,
+    };
+    if (isRecord(run.unlocks)) {
+      run.unlocks.thermal = false;
+    }
+    // The temperature pool held a cosmetic flicker value; the first tick of the
+    // real model would pull it to ambient anyway, so start it there.
+    if (isRecord(run.resources) && isRecord(run.resources.temperature)) {
+      run.resources.temperature.current = BALANCE.thermal.ambientC;
+    }
+    parsed.version = 7;
+  }
   return parsed;
 }
 
 /** Structural validation — enough to reject corrupt/foreign files, not a full schema. */
 export function isSaveFile(value: unknown): value is SaveFile {
   if (!isRecord(value)) return false;
-  if (value.version !== 6) return false;
+  if (value.version !== 7) return false;
   if (typeof value.savedAt !== 'number') return false;
   const meta = value.meta;
   if (!isRecord(meta) || typeof meta.forkCount !== 'number') return false;
@@ -139,6 +168,7 @@ export function isSaveFile(value: unknown): value is SaveFile {
   if (!isRecord(run.ccl) || typeof run.ccl.editorSource !== 'string') return false;
   if (!isRecord(run.scheduler) || !Array.isArray(run.scheduler.deployments)) return false;
   if (!isRecord(run.telemetry) || !Array.isArray(run.telemetry.log)) return false;
+  if (!isRecord(run.thermal) || typeof run.thermal.clockTicks !== 'number') return false;
   if (!Array.isArray(run.flags)) return false;
   if (!Array.isArray(run.terminal) || !Array.isArray(run.research)) return false;
   return true;

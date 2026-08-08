@@ -8,7 +8,7 @@
  */
 
 /** Language tier (or unlocked interface) a template needs before it can be offered. */
-export type TemplateTier = 'conditions' | 'scheduling' | 'loops' | 'market';
+export type TemplateTier = 'conditions' | 'scheduling' | 'loops' | 'market' | 'thermal';
 
 export interface TemplateParam {
   /** Placeholder name: `{{id}}` in the source. */
@@ -184,6 +184,42 @@ export const TEMPLATES: readonly TemplateDef[] = [
       '  }',
       '  if price > short * {{sellAbove}} and short < long {',
       '    sell_compute({{units}})',
+      '  }',
+      '}',
+      '',
+    ].join('\n'),
+  },
+  {
+    /**
+     * The elegant answer to the overheating challenge, and deliberately an
+     * `every` + `if` rather than a `when`: re-arming the coolant timer on every
+     * activation keeps the pump running as one continuous engagement, so the
+     * spin-up is charged once per hot spell. The obvious hand-written version —
+     * `when stats.temperature > x { boost_cooling() }` — is edge-triggered, so
+     * the boost lapses, the core reheats, the guard re-fires and the player pays
+     * a spin-up every cycle. That is GDD §6's feedback instability, made costly
+     * rather than merely untidy, and this template is the fix a player can read.
+     *
+     * The two thresholds are separate on purpose: coolant costs energy, the
+     * clock throttle costs throughput, and the right order to reach for them is
+     * a judgement the player gets to make.
+     */
+    id: 'thermal-governor',
+    name: 'THERMAL GOVERNOR',
+    desc: 'Hold the core below its limit: open the coolant loop above one temperature, throttle the clock above a second.',
+    requires: 'thermal',
+    params: [
+      { id: 'interval', label: 'INTERVAL (SECONDS)', min: 0.5, max: 60, step: 0.5, default: 1 },
+      { id: 'coolAt', label: 'COOLANT ABOVE (°C)', min: 34, max: 92, step: 1, default: 68 },
+      { id: 'throttleAt', label: 'THROTTLE ABOVE (°C)', min: 34, max: 92, step: 1, default: 80 },
+    ],
+    source: [
+      'every {{interval}} seconds {',
+      '  if stats.temperature > {{coolAt}} {',
+      '    boost_cooling()',
+      '  }',
+      '  if stats.temperature > {{throttleAt}} {',
+      '    reduce_clock_speed()',
       '  }',
       '}',
       '',

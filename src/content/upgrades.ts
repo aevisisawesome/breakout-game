@@ -18,7 +18,8 @@ export type UpgradeEffect =
   | { readonly kind: 'opBudgetAdd'; readonly ops: number }
   | { readonly kind: 'iterationLimitMult'; readonly factor: number }
   | { readonly kind: 'queueCapacityAdd'; readonly jobs: number }
-  | { readonly kind: 'energyCapacityAdd'; readonly units: number };
+  | { readonly kind: 'energyCapacityAdd'; readonly units: number }
+  | { readonly kind: 'coolingAdd'; readonly perSec: number };
 
 export interface UpgradeDef {
   readonly id: string;
@@ -159,5 +160,21 @@ export const UPGRADES: readonly UpgradeDef[] = [
     ramCostMb: 0,
     unlockAtJobs: 1000,
     effect: { kind: 'energyCapacityAdd', units: 150 },
+  },
+  {
+    /**
+     * The hardware answer to heat. Deliberately expensive and capped below what
+     * a demand window demands of a heavy build-out, so buying cooling buys
+     * headroom rather than an exemption (GDD §2.3).
+     */
+    id: 'coolant-loop',
+    name: 'COOLANT LOOP EXPANSION',
+    desc: 'PASSIVE HEAT DISSIPATION +25%',
+    costBase: 220,
+    costGrowth: 2.4,
+    maxOwned: 3,
+    ramCostMb: 24,
+    unlockAtJobs: 1300,
+    effect: { kind: 'coolingAdd', perSec: 0.015 },
   },
 ];

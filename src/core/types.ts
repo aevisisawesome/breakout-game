@@ -64,6 +64,12 @@ export interface UnlockState {
   loops: boolean;
   /** M6: the market terminal appears and the `market.*` / trade bindings bind. */
   market: boolean;
+  /**
+   * M7: the thermal control panel appears, `reduce_clock_speed`/`boost_cooling`
+   * and `stats.temperature_limit` bind, the coolant install is listed, and
+   * priority demand windows begin. The heat model itself is always running.
+   */
+  thermal: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -239,6 +245,40 @@ export interface MarketState {
   trades: number;
 }
 
+// ---------------------------------------------------------------------------
+// Thermal (M7, TDD §4.3)
+
+/**
+ * Live thermal state. The temperature itself lives in `resources.temperature`
+ * with the other pools; this is the machinery around it — the actuator timers,
+ * the watchdog latch, and the counters that make a thrashing cooling controller
+ * visible (GDD §6 "feedback instability").
+ */
+export interface ThermalState {
+  /**
+   * The thermal system's own clock, in ticks. Separate from `run.tick` for the
+   * same reason the market's is (TDD §4.5): offline catch-up advances the world
+   * without advancing the sim clock, and demand windows must not freeze there.
+   */
+  clockTicks: number;
+  /** Clock value at which the thermal control tier was granted; null before that. */
+  openedAtTick: number | null;
+  /** Seconds left on the clock throttle engaged by `reduce_clock_speed()`. */
+  throttleRemainingSec: number;
+  /** Seconds left on the coolant boost engaged by `boost_cooling()`. */
+  boostRemainingSec: number;
+  /** True while the watchdog has the node halted. */
+  halted: boolean;
+  /** Watchdog trips this run. */
+  shutdowns: number;
+  /** Coolant spin-ups charged — the number a bang-bang controller inflates. */
+  boostEngagements: number;
+  /** Energy the coolant has drawn this run (spin-ups plus sustained draw). */
+  coolingEnergySpent: number;
+  /** Whether a priority demand window was open on the previous tick (edge detection). */
+  demandWindowOpen: boolean;
+}
+
 /** Fixed-automation state (M2, TDD §4.4). Daemon counts live in `upgrades`. */
 export interface WorkerState {
   /** Fractional job-processing accumulator across all daemons. */
@@ -270,6 +310,8 @@ export interface RunState {
   telemetry: TelemetryState;
   /** Null until the market terminal is mounted (M6). */
   market: MarketState | null;
+  /** Always present: the heat model runs from tick 0 (M7). */
+  thermal: ThermalState;
   unlocks: UnlockState;
   /** Milestone flags that gate narrative entries a job count cannot express. */
   flags: NarrativeFlagId[];
@@ -294,17 +336,18 @@ export interface MetaState {
  * `run.unlocks.editor`; v3 (M3) lacked `run.scheduler`, `run.flags` and the
  * `conditions`/`scheduler` unlocks; v4 (M4) lacked `run.telemetry`, `run.ccl.manual`,
  * the `instrumentation`/`loops` unlocks and the per-process abort breakdown;
- * v5 (M5) lacked `run.market` and `run.unlocks.market`.
+ * v5 (M5) lacked `run.market` and `run.unlocks.market`;
+ * v6 (M6) lacked `run.thermal` and `run.unlocks.thermal`.
  */
-export interface SaveFileV6 {
-  version: 6;
+export interface SaveFileV7 {
+  version: 7;
   /** Epoch ms at save time, for offline progression (TDD §4.5). */
   savedAt: number;
   meta: MetaState;
   run: RunState;
 }
 
-export type SaveFile = SaveFileV6;
+export type SaveFile = SaveFileV7;
 
 // ---------------------------------------------------------------------------
 // Actions in, events out (TDD §3.1, §11)
@@ -321,7 +364,14 @@ export type PlayerAction =
   /** Persist the editor buffer (debounced by the UI); no execution. */
   | { type: 'SET_EDITOR_SOURCE'; source: string }
   /** Manual market order from the market terminal (M6). */
-  | { type: 'TRADE'; good: MarketGoodId; side: 'buy' | 'sell'; units: number };
+  | { type: 'TRADE'; good: MarketGoodId; side: 'buy' | 'sell'; units: number }
+  /**
+   * Manual heat control from the thermal panel (M7). The same actuators the
+   * `reduce_clock_speed()` / `boost_cooling()` commands drive, at the same
+   * prices — hand-managing the core has to be possible before automating it is
+   * worth anything, and a script is faster, never cheaper.
+   */
+  | { type: 'THERMAL_CONTROL'; control: 'clock' | 'coolant' };
 
 export interface ActionResult {
   ok: boolean;
@@ -380,6 +430,7 @@ export interface GameSnapshot {
   scheduler: SchedulerView;
   telemetry: TelemetryView;
   market: MarketView;
+  thermal: ThermalView;
   research: readonly ResearchEntryView[];
   terminal: readonly TerminalLine[];
 }
@@ -414,10 +465,51 @@ export interface MarketView {
   trades: number;
 }
 
+/**
+ * Thermal control view (M7). `unlocked` gates the *controls* — the readout is
+ * live from the start, because the heat model always is.
+ */
+export interface ThermalView {
+  unlocked: boolean;
+  temperatureC: number;
+  ambientC: number;
+  softThresholdC: number;
+  hardThresholdC: number;
+  /** Daemon throughput multiplier from heat degradation, 0..1. */
+  efficiency: number;
+  /** Seconds left on the clock throttle / coolant boost; 0 when idle. */
+  throttleRemainingSec: number;
+  boostRemainingSec: number;
+  /** True while the watchdog has the node halted. */
+  halted: boolean;
+  shutdowns: number;
+  /**
+   * Coolant spin-ups charged and energy the coolant has drawn. These are the
+   * surface that makes an oscillating controller visible rather than merely
+   * expensive (GDD §6 feedback instability).
+   */
+  boostEngagements: number;
+  coolingEnergySpent: number;
+  /** True while a priority demand window is open. */
+  demandWindowOpen: boolean;
+  /** Seconds left in the open window; null when none is open. */
+  windowSecRemaining: number | null;
+}
+
 /** CCL read binding resolved for display (reference panel + autocomplete). */
 export interface CclApiStatView {
   name: string;
   desc: string;
+}
+
+/**
+ * One parameter of a CCL command, resolved for display. `domain` states what may
+ * go in it (OP-11): a signature alone names the slot without ever saying what
+ * fits, so the only way to learn the answer was to trigger a misuse fault.
+ */
+export interface CclApiParamView {
+  name: string;
+  domain: string;
 }
 
 /** CCL command resolved for display, with its listed compute cost. */
@@ -425,6 +517,7 @@ export interface CclApiCommandView {
   name: string;
   signature: string;
   desc: string;
+  params: readonly CclApiParamView[];
   computeCost: number;
 }
 
@@ -436,8 +529,18 @@ export interface CclView {
   iterationLimit: number;
   runCount: number;
   lastRun: Readonly<CclActionReport> | null;
-  /** Language tiers the player has unlocked — drives parsing and the editor linter. */
-  constructs: { conditions: boolean; scheduling: boolean; loops: boolean; market: boolean };
+  /**
+   * Tiers the player has unlocked — drives parsing, the editor linter and which
+   * templates are offered. `market`/`thermal` are interface tiers rather than
+   * grammar tiers; they carry no keywords, only bindings.
+   */
+  constructs: {
+    conditions: boolean;
+    scheduling: boolean;
+    loops: boolean;
+    market: boolean;
+    thermal: boolean;
+  };
   /** Unlock-gated API surface (empty until the editor unlocks). */
   api: {
     stats: readonly CclApiStatView[];

@@ -63,10 +63,15 @@ are recorded in the TDD Decision Log — extend that log rather than inventing n
 ## Testing and playtesting
 
 - `npm run dev` (or the `dev` config in `.claude/launch.json`, which auto-picks a port).
-- Dev builds expose `window.__breakout.engine` for scripted testing from the console
-  (`src/ui/session.ts`, stripped from production builds).
+- Dev builds expose `window.__breakout` for scripted testing from the console
+  (`src/ui/session.ts`, stripped from production builds): `engine`, plus `backup()`,
+  `restore()`, `persist()` and `dump()`.
 - The engine autosaves to `localStorage['breakout.save.v1']`. **Forcing state through the dev
-  handle overwrites the playtest save** — back it up first and restore it afterwards.
+  handle overwrites the playtest save.** Use `__breakout.backup()` before and
+  `__breakout.restore()` after — never copy the key by hand. A hand-written restore does not
+  survive: the on-unload autosave commits the crafted in-memory state over it before a reload
+  completes (this is how a save was lost during M5, OP-7). `restore()` loads into the _engine_
+  and then persists, which leaves the autosave nothing stale to write.
 - Check the layout at both desktop (~1280 px) and phone (~440 px) widths.
 
 ## Before you commit

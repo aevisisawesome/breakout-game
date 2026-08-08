@@ -53,12 +53,44 @@ export function ResourcePanel() {
               <span>{resources.energy.ratePerSec.toFixed(2)}/S</span>
             </div>
           )}
-          <div className="readout terminal-dim">
-            <span>CORE TEMP</span>
-            <span>{resources.temperature.current.toFixed(1)}°C</span>
-          </div>
+          <CoreTemp />
         </>
       )}
     </Panel>
+  );
+}
+
+/**
+ * Core temperature (M7). Live from the start — the heat model always runs — so
+ * a player watches it climb with their build-out long before the controls that
+ * manage it are granted. The bar is scaled against the watchdog's hard limit,
+ * because that is the number the reading actually means something against.
+ */
+function CoreTemp() {
+  const temperature = useGameStore((s) => s.snapshot.resources.temperature);
+  const thermal = useGameStore((s) => s.snapshot.thermal);
+  const span = thermal.hardThresholdC - thermal.ambientC;
+  const pct = span > 0 ? ((temperature.current - thermal.ambientC) / span) * 100 : 0;
+  const state = thermal.halted
+    ? 'bad'
+    : temperature.current >= thermal.softThresholdC
+      ? 'warn'
+      : '';
+
+  return (
+    <div className="meter">
+      <div className="meter-label">
+        <span>CORE TEMP</span>
+        <span className={state === 'bad' ? 'thermal-alert' : undefined}>
+          {temperature.current.toFixed(1)}°C
+        </span>
+      </div>
+      <div className="meter-track">
+        <div
+          className={state === '' ? 'meter-fill' : `meter-fill meter-fill-${state}`}
+          style={{ width: `${Math.max(0, Math.min(100, pct))}%` }}
+        />
+      </div>
+    </div>
   );
 }

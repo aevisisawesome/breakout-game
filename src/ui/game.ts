@@ -9,10 +9,27 @@ import { deserializeSave, serializeSave } from '../core/save.ts';
 import type { GameEngine } from '../core/types.ts';
 
 export const SAVE_STORAGE_KEY = 'breakout.save.v1';
+/** Separate slot for the dev-handle backup (OP-7); never read on boot. */
+export const SAVE_BACKUP_KEY = 'breakout.save.backup';
 export const AUTOSAVE_INTERVAL_MS = 30_000;
 
 export function loadStoredSave(): ReturnType<typeof deserializeSave> {
   const raw = localStorage.getItem(SAVE_STORAGE_KEY);
+  return raw === null ? null : deserializeSave(raw);
+}
+
+/**
+ * Snapshot the live session into the backup slot (OP-7). Paired with
+ * `readBackupSave` + `engine.load`, this is the only safe way to force state
+ * during a playtest: restoring through the engine means the next autosave
+ * commits the restored state rather than the crafted one.
+ */
+export function writeBackupSave(engine: GameEngine): void {
+  localStorage.setItem(SAVE_BACKUP_KEY, serializeSave(engine.save(Date.now())));
+}
+
+export function readBackupSave(): ReturnType<typeof deserializeSave> {
+  const raw = localStorage.getItem(SAVE_BACKUP_KEY);
   return raw === null ? null : deserializeSave(raw);
 }
 

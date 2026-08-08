@@ -46,6 +46,8 @@ export interface DerivedStats {
   queueCapacity: number;
   /** Energy reserve capacity (M6: raised by ENERGY BUFFER CELL). */
   energyCapacity: number;
+  /** Passive heat dissipation coefficient (M7: raised by COOLANT LOOP EXPANSION). */
+  coolingPerSec: number;
 }
 
 export function computeDerived(
@@ -64,6 +66,7 @@ export function computeDerived(
   let iterationMult = 1;
   let queueCapAdd = 0;
   let energyCapAdd = 0;
+  let coolingAdd = 0;
 
   for (const def of UPGRADES) {
     const owned = upgrades[def.id] ?? 0;
@@ -104,6 +107,9 @@ export function computeDerived(
       case 'energyCapacityAdd':
         energyCapAdd += effect.units * owned;
         break;
+      case 'coolingAdd':
+        coolingAdd += effect.perSec * owned;
+        break;
     }
   }
 
@@ -122,5 +128,6 @@ export function computeDerived(
     iterationLimit: Math.round(BALANCE.ccl.iterationLimitBase * iterationMult),
     queueCapacity: BALANCE.jobs.queueCapacity + queueCapAdd,
     energyCapacity: BALANCE.resources.energyCapacity + energyCapAdd,
+    coolingPerSec: BALANCE.thermal.dissipationPerSec + coolingAdd,
   };
 }

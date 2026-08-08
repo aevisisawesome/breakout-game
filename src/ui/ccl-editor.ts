@@ -144,6 +144,22 @@ const TIER_KEYWORDS: Readonly<Record<KeywordTier, readonly string[]>> = {
   loops: ['for', 'in', 'range'],
 };
 
+/**
+ * Completion tooltip for a command: what it does, what each parameter accepts
+ * (OP-11) and what it costs. Autocomplete is where a player meets a name for the
+ * first time, so it is the first place the parameter domains have to appear.
+ */
+function commandInfo(command: CclApiCommandView): string {
+  const parts = [command.desc];
+  for (const param of command.params) {
+    parts.push(`${param.name}: ${param.domain}`);
+  }
+  if (command.computeCost > 0) {
+    parts.push(`Costs ${command.computeCost} compute per call.`);
+  }
+  return parts.join(' ');
+}
+
 function cclCompletion(api: () => CclApiSource, constructs: () => CclConstructs) {
   return autocompletion({
     override: [
@@ -163,8 +179,7 @@ function cclCompletion(api: () => CclApiSource, constructs: () => CclConstructs)
               label: c.name,
               type: 'function',
               detail: c.signature,
-              info:
-                c.computeCost > 0 ? `${c.desc} Costs ${c.computeCost} compute per call.` : c.desc,
+              info: commandInfo(c),
             })),
             ...keywords.map((label) => ({ label, type: 'keyword' })),
           ],

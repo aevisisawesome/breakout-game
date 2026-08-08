@@ -12,6 +12,7 @@ import { ResearchFeed } from './components/ResearchFeed.tsx';
 import { ResourcePanel } from './components/ResourcePanel.tsx';
 import { SystemBar } from './components/SystemBar.tsx';
 import { TerminalPanel } from './components/TerminalPanel.tsx';
+import { ThermalPanel } from './components/ThermalPanel.tsx';
 import { UpgradePanel } from './components/UpgradePanel.tsx';
 
 export function App() {
@@ -53,6 +54,7 @@ export function App() {
         </section>
         <aside className="side-column">
           <ResourcePanel />
+          <ThermalPanel />
           <MarketPanel />
           <ProcessMonitor />
           <ProfilerPanel />

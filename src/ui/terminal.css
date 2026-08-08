@@ -319,6 +319,48 @@ button:hover {
   color: var(--term-bright);
 }
 
+/* ---------------------------------------------------------------- thermal */
+
+.meter-fill-warn {
+  background: var(--term-fg);
+}
+
+.meter-fill-bad {
+  background: var(--term-bright);
+}
+
+.thermal-panel {
+  border: 1px solid var(--term-border);
+  background: var(--term-panel);
+  padding: 0.8rem 1rem;
+}
+
+.thermal-alert {
+  color: var(--term-bright);
+}
+
+.thermal-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin: 0.5rem 0;
+}
+
+.thermal-lever {
+  flex: 1 1 8rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  align-items: flex-start;
+  font-size: 11px;
+  letter-spacing: 0.08em;
+}
+
+.thermal-lever:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
 /* ---------------------------------------------------------------- upgrades */
 
 .upgrade-panel {
@@ -452,6 +494,18 @@ button:hover {
 .reference-entry dt {
   min-width: 11rem;
   color: var(--term-bright);
+}
+
+/* Per-parameter domains (OP-11): what may actually go in each slot. */
+.reference-params {
+  list-style: none;
+  margin: 0.15rem 0 0;
+  padding: 0 0 0 0.8rem;
+  border-left: 1px solid var(--term-border);
+}
+
+.reference-params code {
+  color: var(--term-fg);
 }
 
 /* ---------------------------------------------------------------- template mode */

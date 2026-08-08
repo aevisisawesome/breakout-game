@@ -75,11 +75,13 @@ describe('every template compiles under its declared tier', () => {
 
     it(`${def.id} genuinely needs the tier it declares`, () => {
       const source = renderTemplate(def, templateDefaults(def));
-      if (def.requires === 'market') {
-        // 'market' gates bindings, not grammar (M6): the source parses either
-        // way, so what must be true is that it uses a binding the gate hides.
+      if (def.requires === 'market' || def.requires === 'thermal') {
+        // 'market' (M6) and 'thermal' (M7) gate bindings, not grammar: the source
+        // parses either way, so what must be true is that it uses a binding the
+        // gate hides.
+        const gate = def.requires;
         const gated = [...CCL_STAT_DOCS, ...CCL_COMMAND_DOCS]
-          .filter((doc) => doc.requires === 'market')
+          .filter((doc) => doc.requires === gate)
           .map((doc) => doc.name);
         expect(gated.some((name) => source.includes(name))).toBe(true);
         return;
@@ -100,7 +102,7 @@ describe('generated code is accepted by the engine', () => {
     run.resources.capital.current = 500;
     run.jobs.waiting = 30;
     const engine = createGameEngine(42);
-    engine.load({ version: 6, savedAt: 0, meta: newMetaState(), run });
+    engine.load({ version: 7, savedAt: 0, meta: newMetaState(), run });
 
     const def = TEMPLATES.find((t) => t.id === 'auto-processor')!;
     const source = renderTemplate(def, templateDefaults(def));

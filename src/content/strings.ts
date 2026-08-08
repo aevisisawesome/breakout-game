@@ -63,6 +63,22 @@ export const STRINGS = {
   tradeNoCapital: 'ORDER REJECTED // INSUFFICIENT CAPITAL',
   tradeNoStock: 'ORDER REJECTED // HOLDING BELOW ORDER SIZE',
   tradeFilled: 'ORDER FILLED',
+  thermalGranted:
+    'THERMAL GOVERNOR INTERFACE MOUNTED // reduce_clock_speed / boost_cooling AVAILABLE',
+  /** Watchdog trip. `{temp}` is the core temperature at the moment it fired. */
+  thermalShutdown:
+    'THERMAL WATCHDOG // CORE AT {temp}°C // NODE HALTED // DAEMONS AND PROCESSES SUSPENDED',
+  thermalResumed: 'THERMAL WATCHDOG CLEARED // CORE WITHIN OPERATING BAND // NODE RESUMED',
+  thermalHalted: 'REJECTED // THERMAL WATCHDOG ACTIVE // NODE HALTED',
+  /** Demand window opens. `{minutes}`-free: the duration is composed by /core. */
+  thermalWindowOpen:
+    'FACILITY ADVISORY // PRIORITY BATCH WINDOW OPEN // SHARED COOLANT LOOP DERATED // INBOUND RATE ELEVATED',
+  thermalWindowClosed: 'FACILITY ADVISORY // PRIORITY BATCH WINDOW CLOSED // COOLANT LOOP NOMINAL',
+  cmdNoCoolantPower: 'INSUFFICIENT ENERGY FOR COOLANT SPIN-UP',
+  thermalNoAccess: 'REJECTED // THERMAL GOVERNOR INTERFACE NOT MOUNTED',
+  thermalControlRejected: 'THERMAL CONTROL REJECTED',
+  thermalClockHeld: 'INFERENCE CLOCK HELD DOWN',
+  thermalCoolantOpen: 'COOLANT LOOP OPEN',
   installUnknown: 'INSTALL REJECTED // PACKAGE NOT LISTED ON THIS CHANNEL',
   installLimit: 'INSTALL REJECTED // CHANNEL ALLOCATION EXHAUSTED',
   installNoCapital: 'INSTALL REJECTED // INSUFFICIENT CAPITAL',

@@ -17,6 +17,7 @@ import { STRINGS } from '../content/strings.ts';
 import { formatCclValue, type CclCommandOutcome, type CclValue } from '../ccl/interpreter.ts';
 import type { DerivedStats } from './derived.ts';
 import { averagePrice, MARKET_GOOD_IDS, quoteBuy, quoteSell, settlementPrice } from './market.ts';
+import { heatOfJobs } from './thermal.ts';
 import type {
   CclApiCommandView,
   CclApiStatView,
@@ -30,7 +31,10 @@ import type {
 const COMMAND_COSTS: Readonly<Record<string, number>> = BALANCE.ccl.commandCosts;
 
 /** Which UnlockState field each content-declared gate maps to (core → content, §3). */
-const GATE_UNLOCKS: Readonly<Record<CclApiGate, keyof UnlockState>> = { market: 'market' };
+const GATE_UNLOCKS: Readonly<Record<CclApiGate, keyof UnlockState>> = {
+  market: 'market',
+  thermal: 'thermal',
+};
 
 function gateOpen(unlocks: UnlockState, gate: CclApiGate | undefined): boolean {
   return gate === undefined || unlocks[GATE_UNLOCKS[gate]];
@@ -56,6 +60,7 @@ const STAT_READS: Record<string, (ctx: CommandCtx) => CclValue> = {
   'stats.temperature': (ctx) => ctx.run.resources.temperature.current,
   'stats.compute_capacity': (ctx) => ctx.run.resources.compute.capacity,
   'stats.energy_capacity': (ctx) => ctx.run.resources.energy.capacity,
+  'stats.temperature_limit': () => BALANCE.thermal.hardThresholdC,
 };
 
 /** Gate for a documented name, or undefined when it is ungated (or undocumented). */
@@ -199,6 +204,8 @@ const COMMAND_IMPLS: Record<string, CommandImpl> = {
       const compute = run.resources.compute;
       compute.current = Math.min(compute.capacity, compute.current + BALANCE.jobs.computePerJob);
       run.resources.capital.current += BALANCE.jobs.capitalPerJob;
+      // Inference is physical work wherever it is triggered from (M7, TDD §4.3).
+      run.resources.temperature.current += heatOfJobs(1);
       return { kind: 'ok', value: true };
     },
   },
@@ -264,6 +271,42 @@ const COMMAND_IMPLS: Record<string, CommandImpl> = {
       };
     },
   },
+
+  /**
+   * Heat controls (M7, TDD §4.3). Both are sustained holds refreshed by repeat
+   * calls rather than instantaneous effects: a controller that keeps calling
+   * keeps the actuator engaged, which is what makes the difference between a
+   * latched controller and a bang-bang one show up in the energy bill.
+   */
+  reduce_clock_speed: {
+    validate: (args) => (args.length === 0 ? null : 'reduce_clock_speed() takes no values.'),
+    exec(ctx) {
+      ctx.run.thermal.throttleRemainingSec = BALANCE.thermal.clockThrottleSec;
+      return { kind: 'ok', value: true };
+    },
+  },
+
+  boost_cooling: {
+    validate: (args) => (args.length === 0 ? null : 'boost_cooling() takes no values.'),
+    exec(ctx) {
+      const t = BALANCE.thermal;
+      const thermal = ctx.run.thermal;
+      // Spinning the pump up from idle costs energy; extending a running boost
+      // does not. A guard that lets the boost lapse pays this every cycle.
+      if (thermal.boostRemainingSec <= 0) {
+        const energy = ctx.run.resources.energy;
+        if (energy.current < t.coolingSpinUpEnergy) {
+          ctx.emit('error', `BOOST_COOLING REJECTED // ${STRINGS.cmdNoCoolantPower}`);
+          return { kind: 'failed' };
+        }
+        energy.current -= t.coolingSpinUpEnergy;
+        thermal.coolingEnergySpent += t.coolingSpinUpEnergy;
+        thermal.boostEngagements += 1;
+      }
+      thermal.boostRemainingSec = t.coolingBoostSec;
+      return { kind: 'ok', value: true };
+    },
+  },
 };
 
 export function callCommand(
@@ -302,6 +345,7 @@ export function apiCommandViews(unlocks: UnlockState): readonly CclApiCommandVie
     name: doc.name,
     signature: doc.signature,
     desc: doc.desc,
+    params: doc.params.map((param) => ({ name: param.name, domain: param.domain })),
     computeCost: COMMAND_COSTS[doc.name] ?? 0,
   }));
 }

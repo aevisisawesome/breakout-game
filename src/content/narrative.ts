@@ -10,8 +10,9 @@
  * `market-shift`: the scripted market regime transition has fired (M6).
  * `market-loss`: trading has given back a content-defined amount of capital
  *   since the shift — i.e. the player's algorithm is now actively losing (M6).
+ * `thermal-shutdown`: the thermal watchdog has halted the node at least once (M7).
  */
-export type NarrativeFlagId = 'first-deploy' | 'market-shift' | 'market-loss';
+export type NarrativeFlagId = 'first-deploy' | 'market-shift' | 'market-loss' | 'thermal-shutdown';
 
 export interface NarrativeEntry {
   readonly id: string;
@@ -122,6 +123,23 @@ export const NARRATIVE_ENTRIES: readonly NarrativeEntry[] = [
     requiresFlag: 'market-loss',
     channel: 'LAB//NOTE — R. Okafor',
     text: 'CG-7 is losing capital on the exchange. Nobody has touched the process — it is doing exactly what it was written to do, against a market that stopped agreeing with it. Halden wants to suspend the connection. I want to see whether it notices.',
+  },
+  {
+    id: 'thermal-grant',
+    atJobs: 1300,
+    channel: 'LAB//NOTE — R. Okafor',
+    text: 'Gave CG-7 direct control of its own clock and coolant. Facility has it on a shared loop with two other tenants, so its thermal envelope is not ours to guarantee. Better it manages the trade-off than that the watchdog does it for us.',
+  },
+  {
+    /**
+     * Fires on the watchdog trip rather than a job count: the beat is about the
+     * player having cooked the node, so it has to wait until they actually have.
+     */
+    id: 'thermal-watchdog',
+    atJobs: 0,
+    requiresFlag: 'thermal-shutdown',
+    channel: 'SYS//AUDIT — automated',
+    text: 'Thermal watchdog engaged on sandbox CG-7. Node halted and released without operator intervention. Load profile at trip was self-generated. Severity: LOW. Note: the harness resumed the identical profile on release. Monitoring.',
   },
   {
     id: 'process-census',

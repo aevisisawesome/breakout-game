@@ -16,7 +16,7 @@ function engineWith(setup: (run: RunState) => void, seed = 42): GameEngine {
   const run = newRunState(seed);
   setup(run);
   const engine = createGameEngine(seed);
-  engine.load({ version: 6, savedAt: 0, meta: newMetaState(), run });
+  engine.load({ version: 7, savedAt: 0, meta: newMetaState(), run });
   return engine;
 }
 
@@ -268,12 +268,13 @@ describe('save migration', () => {
     delete v1run.flags;
     delete v1run.telemetry;
     delete v1run.market;
+    delete v1run.thermal;
     const v1 = { version: 1, savedAt: 123, meta: current.meta, run: v1run };
     const text = serializeSave(v1 as unknown as SaveFile);
 
     const restored = deserializeSave(text);
     expect(restored).not.toBeNull();
-    expect(restored!.version).toBe(6);
+    expect(restored!.version).toBe(7);
     expect(restored!.run.upgrades).toEqual({});
     expect(restored!.run.workers).toEqual({ processAccumulator: 0, overclockRemainingSec: 0 });
     expect(restored!.run.ccl).toEqual({
@@ -297,6 +298,12 @@ describe('save migration', () => {
     expect(restored!.run.unlocks.loops).toBe(false);
     expect(restored!.run.market).toBeNull();
     expect(restored!.run.unlocks.market).toBe(false);
+    // The heat model always runs, so the thermal machinery is always present —
+    // but the *controls* are a tier, so the gate re-derives like the others.
+    expect(restored!.run.thermal.openedAtTick).toBeNull();
+    expect(restored!.run.thermal.clockTicks).toBe(0);
+    expect(restored!.run.unlocks.thermal).toBe(false);
+    expect(restored!.run.resources.temperature.current).toBe(BALANCE.thermal.ambientC);
 
     // And a fresh engine accepts the migrated file.
     const engineB = createGameEngine(1);

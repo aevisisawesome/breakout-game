@@ -32,6 +32,18 @@ import {
 import { createPrng } from './prng.ts';
 import * as registry from './registry.ts';
 import { intervalTicks, intervalsAllowed, newProcessRuntime, scriptRamMb } from './scheduler.ts';
+import {
+  coolTemperature,
+  demandWindowTicksRemaining,
+  heatOfJobs,
+  heatOfOps,
+  isDemandWindowOpen,
+  settledTemperature,
+  sustainableJobsPerSec,
+  thermalEfficiency,
+  thermalEnv,
+  type ThermalEnv,
+} from './thermal.ts';
 import { clamp } from './util/math.ts';
 import type {
   ActionResult,
@@ -52,6 +64,7 @@ import type {
   SaveFile,
   TerminalLine,
   TerminalLineKind,
+  ThermalState,
   Unsubscribe,
   UpgradeView,
 } from './types.ts';
@@ -75,6 +88,21 @@ export function newMetaState(): MetaState {
   return { forkCount: 0, architecturePoints: 0, unlockedConstructs: [] };
 }
 
+/** Thermal machinery at rest (M7). The heat model runs from tick 0. */
+export function newThermalState(): ThermalState {
+  return {
+    clockTicks: 0,
+    openedAtTick: null,
+    throttleRemainingSec: 0,
+    boostRemainingSec: 0,
+    halted: false,
+    shutdowns: 0,
+    boostEngagements: 0,
+    coolingEnergySpent: 0,
+    demandWindowOpen: false,
+  };
+}
+
 export function newRunState(seed: number): RunState {
   const r = BALANCE.resources;
   const run: RunState = {
@@ -86,7 +114,7 @@ export function newRunState(seed: number): RunState {
       ram: pool(0, r.ramCapacityMb),
       capital: pool(0, Infinity),
       energy: pool(r.energyIdle, r.energyCapacity),
-      temperature: pool(r.temperatureIdleC, Infinity),
+      temperature: pool(BALANCE.thermal.ambientC, Infinity),
     },
     jobs: { waiting: 0, arrivalAccumulator: 0, lifetimeProcessed: 0, lifetimeClicks: 0 },
     upgrades: {},
@@ -106,6 +134,7 @@ export function newRunState(seed: number): RunState {
     scheduler: { deployments: [], nextId: 1 },
     telemetry: { log: [], nextLogId: 1 },
     market: null,
+    thermal: newThermalState(),
     unlocks: {
       capitalReadout: false,
       systemReadouts: false,
@@ -115,6 +144,7 @@ export function newRunState(seed: number): RunState {
       instrumentation: false,
       loops: false,
       market: false,
+      thermal: false,
     },
     flags: [],
     research: [],
@@ -235,6 +265,67 @@ export function createGameEngine(seed: number): GameEngine {
       run.market = newMarketState(run.tick, TICKS_PER_SEC);
       terminal('system', STRINGS.marketGranted);
     }
+    if (!run.unlocks.thermal && run.jobs.lifetimeProcessed >= BALANCE.ccl.thermalUnlockAtJobs) {
+      run.unlocks.thermal = true;
+      // Demand windows are scheduled from the grant, so the controls always
+      // arrive before the challenge that needs them (TDD §4.3).
+      run.thermal.openedAtTick = run.thermal.clockTicks;
+      terminal('system', STRINGS.thermalGranted);
+    }
+  }
+
+  // -------------------------------------------------------------------------
+  // Thermal (M7, TDD §4.3)
+
+  /** Add heat at the point the work happens — jobs and interpreter ops both. */
+  function addHeat(degreesC: number): void {
+    if (degreesC <= 0) return;
+    run.resources.temperature.current += degreesC;
+  }
+
+  /** Conditions the core is currently sitting in, including any open demand window. */
+  function currentThermalEnv(derived: DerivedStats): ThermalEnv {
+    return thermalEnv(
+      derived.coolingPerSec,
+      run.thermal.boostRemainingSec > 0,
+      run.thermal.demandWindowOpen,
+    );
+  }
+
+  /**
+   * Open or close the recurring priority demand window (M7). Announced, unlike
+   * the market regime: the facility tells its tenants when the shared coolant
+   * loop is derated — what it does not say is whether this node can take it.
+   */
+  function checkDemandWindow(): void {
+    const thermal = run.thermal;
+    const open = isDemandWindowOpen(thermal.clockTicks, thermal.openedAtTick, TICKS_PER_SEC);
+    if (open === thermal.demandWindowOpen) return;
+    thermal.demandWindowOpen = open;
+    terminal('system', open ? STRINGS.thermalWindowOpen : STRINGS.thermalWindowClosed);
+  }
+
+  /**
+   * Watchdog thermal shutdown (TDD §4.3). Latching with hysteresis: it trips at
+   * the hard threshold and releases only once the core is back under the resume
+   * threshold, so it cannot chatter at the boundary.
+   */
+  function checkWatchdog(): void {
+    const t = BALANCE.thermal;
+    const thermal = run.thermal;
+    const temperature = run.resources.temperature.current;
+    if (!thermal.halted && temperature >= t.hardThresholdC) {
+      thermal.halted = true;
+      thermal.shutdowns += 1;
+      terminal('error', STRINGS.thermalShutdown.replace('{temp}', temperature.toFixed(1)));
+      setFlag('thermal-shutdown');
+      checkNarrative();
+      return;
+    }
+    if (thermal.halted && temperature <= t.resumeThresholdC) {
+      thermal.halted = false;
+      terminal('system', STRINGS.thermalResumed);
+    }
   }
 
   /**
@@ -258,8 +349,8 @@ export function createGameEngine(seed: number): GameEngine {
   }
 
   /** Push arrived jobs into the queue from the fractional accumulator. */
-  function applyArrivals(derived: DerivedStats, dtSec: number): void {
-    run.jobs.arrivalAccumulator += derived.arrivalPerSec * dtSec;
+  function applyArrivals(derived: DerivedStats, env: ThermalEnv, dtSec: number): void {
+    run.jobs.arrivalAccumulator += derived.arrivalPerSec * env.arrivalMult * dtSec;
     while (run.jobs.arrivalAccumulator >= 1) {
       run.jobs.arrivalAccumulator -= 1;
       if (run.jobs.waiting < derived.queueCapacity) {
@@ -271,6 +362,14 @@ export function createGameEngine(seed: number): GameEngine {
   /** RAM occupied by deployed scripts (TDD §4.3), on top of install footprints. */
   function deployedRamMb(): number {
     return run.scheduler.deployments.reduce((total, dep) => total + dep.ramMb, 0);
+  }
+
+  /** Lifetime op-units executed by deployed processes; the offline path diffs it. */
+  function deployedOpsTotal(): number {
+    return run.scheduler.deployments.reduce(
+      (total, dep) => total + dep.processes.reduce((sub, p) => sub + p.opsTotal, 0),
+      0,
+    );
   }
 
   /**
@@ -355,6 +454,9 @@ export function createGameEngine(seed: number): GameEngine {
         // the daemons instead, which is the visible, recoverable consequence.
         const energy = run.resources.energy;
         energy.current = Math.max(0, energy.current - n * energyPerOp);
+        // ...and it makes heat (M7, GDD §2.4): a wasteful loop is not just slow,
+        // it warms the core it is running on.
+        addHeat(heatOfOps(n));
         return true;
       },
       readStat: (namespace, field) => registry.readStat(ctx, namespace, field),
@@ -606,19 +708,33 @@ export function createGameEngine(seed: number): GameEngine {
     const dtSec = TICK_MS / 1000;
     const derived = computeDerived(run.upgrades, run.jobs.lifetimeProcessed);
     const w = BALANCE.workers;
+    const thermal = run.thermal;
+
+    // Thermal actuators decay before anything reads them, so a hold engaged N
+    // seconds ago has exactly N seconds of effect (M7).
+    thermal.clockTicks += 1;
+    checkDemandWindow();
+    thermal.throttleRemainingSec = Math.max(0, thermal.throttleRemainingSec - dtSec);
+    const boostActive = thermal.boostRemainingSec > 0;
+    if (boostActive) {
+      thermal.boostRemainingSec = Math.max(0, thermal.boostRemainingSec - dtSec);
+    }
+    const env = currentThermalEnv(derived);
+    const halted = thermal.halted;
 
     // Prices settle before any script can read them, so every activation in this
     // tick sees the same market (TDD §6).
     stepMarketState(rng);
 
     // Script activations run first in the tick: the queued RUN press, then the
-    // deployed processes in slot order (TDD §5.3).
+    // deployed processes in slot order (TDD §5.3). A thermal shutdown suspends
+    // both — that is what makes it a failure state rather than a status light.
     if (pendingProgram) {
       const program = pendingProgram;
       pendingProgram = null;
-      executeProgram(program, derived);
+      if (!halted) executeProgram(program, derived);
     }
-    if (run.scheduler.deployments.length > 0) {
+    if (!halted && run.scheduler.deployments.length > 0) {
       const before = run.jobs.lifetimeProcessed;
       stepScheduler(derived);
       if (run.jobs.lifetimeProcessed > before) {
@@ -627,7 +743,7 @@ export function createGameEngine(seed: number): GameEngine {
       }
     }
 
-    applyArrivals(derived, dtSec);
+    applyArrivals(derived, env, dtSec);
 
     // Click overclock decay.
     const workers = run.workers;
@@ -637,17 +753,22 @@ export function createGameEngine(seed: number): GameEngine {
     }
 
     // Inference daemons (TDD §4.4): process queued jobs, drawing compute overhead
-    // and draining energy while working. Empty energy throttles throughput.
+    // and draining energy while working. Empty energy throttles throughput; heat
+    // degrades it (TDD §4.3) and the clock throttle holds it down deliberately.
     const compute = run.resources.compute;
     const energy = run.resources.energy;
     const energyEmpty = energy.current <= 0;
+    const efficiency = thermalEfficiency(run.resources.temperature.current);
     const rateMult =
-      (overclockActive ? w.overclock.multiplier : 1) * (energyEmpty ? w.energyThrottledFactor : 1);
+      (overclockActive ? w.overclock.multiplier : 1) *
+      (energyEmpty ? w.energyThrottledFactor : 1) *
+      efficiency *
+      (thermal.throttleRemainingSec > 0 ? BALANCE.thermal.clockThrottleFactor : 1);
     const effectiveRate = derived.workerJobsPerSec * rateMult;
-    // "Working" = daemons exist and the queue is non-empty; drives energy drain + rate display.
-    const working = derived.workerCount > 0 && run.jobs.waiting > 0;
+    // "Working" = daemons exist, the queue is non-empty and the watchdog is clear.
+    const working = !halted && derived.workerCount > 0 && run.jobs.waiting > 0;
     let processed = 0;
-    if (derived.workerCount > 0) {
+    if (!halted && derived.workerCount > 0) {
       workers.processAccumulator += effectiveRate * dtSec;
       const affordable =
         w.computeOverheadPerJob > 0
@@ -661,6 +782,7 @@ export function createGameEngine(seed: number): GameEngine {
         const netCompute = BALANCE.jobs.computePerJob - w.computeOverheadPerJob;
         compute.current = Math.min(compute.capacity, compute.current + netCompute * processed);
         run.resources.capital.current += BALANCE.jobs.capitalPerJob * processed;
+        addHeat(heatOfJobs(processed));
       }
       // Never bank more than one job of credit while starved (queue/compute limits).
       workers.processAccumulator = Math.min(workers.processAccumulator, 1);
@@ -668,8 +790,11 @@ export function createGameEngine(seed: number): GameEngine {
       workers.processAccumulator = 0;
     }
 
-    // Energy: constant recharge; drain scales with attempted throughput while working.
-    const drainPerSec = working ? derived.energyDrainPerSec * rateMult : 0;
+    // Energy: constant recharge; drain scales with attempted throughput while
+    // working, plus the coolant pump's sustained draw while it is engaged.
+    const coolingDraw = boostActive ? BALANCE.thermal.coolingBoostEnergyPerSec : 0;
+    if (coolingDraw > 0) thermal.coolingEnergySpent += coolingDraw * dtSec;
+    const drainPerSec = (working ? derived.energyDrainPerSec * rateMult : 0) + coolingDraw;
     energy.current = clamp(
       energy.current + (derived.energyRegenPerSec - drainPerSec) * dtSec,
       0,
@@ -685,10 +810,12 @@ export function createGameEngine(seed: number): GameEngine {
     run.resources.capital.ratePerSec = displayRate * BALANCE.jobs.capitalPerJob;
     energy.ratePerSec = derived.energyRegenPerSec - drainPerSec;
 
-    // Inert temperature flicker — visual life only, no gameplay effect (until M7).
-    const t = BALANCE.resources;
-    run.resources.temperature.current =
-      t.temperatureIdleC + (rng.next() * 2 - 1) * t.temperatureFlickerC;
+    // Heat was added at the point of work; dissipation is applied once per tick.
+    const temperature = run.resources.temperature;
+    const before = temperature.current;
+    temperature.current = coolTemperature(before, env, dtSec);
+    temperature.ratePerSec = (temperature.current - before) / dtSec;
+    checkWatchdog();
 
     run.rngState = rng.getState();
 
@@ -701,6 +828,13 @@ export function createGameEngine(seed: number): GameEngine {
   function executeClick(): ActionResult {
     run.jobs.lifetimeClicks += 1;
     terminal('input', `> ${STRINGS.executeInput}`);
+
+    // A thermal shutdown halts the node, and the manual trigger is part of the
+    // node — otherwise the failure state is one the player can simply ignore.
+    if (run.thermal.halted) {
+      terminal('error', STRINGS.thermalHalted);
+      return { ok: false, reason: STRINGS.thermalHalted };
+    }
 
     const derived = computeDerived(run.upgrades, run.jobs.lifetimeProcessed);
     const w = BALANCE.workers;
@@ -728,6 +862,7 @@ export function createGameEngine(seed: number): GameEngine {
     const saturated = compute.current + computeGain > compute.capacity;
     compute.current = Math.min(compute.capacity, compute.current + computeGain);
     run.resources.capital.current += capitalGain;
+    addHeat(heatOfJobs(processed));
 
     terminal(
       'result',
@@ -825,6 +960,13 @@ export function createGameEngine(seed: number): GameEngine {
 
   function runScript(source: string): ActionResult {
     terminal('input', `> ${STRINGS.runInput}`);
+    // RUN is execution, so the watchdog stops it. DEPLOY is configuration and is
+    // still allowed — a halted node can be reprogrammed, just not run.
+    if (run.thermal.halted) {
+      terminal('error', STRINGS.thermalHalted);
+      reportAction('run', 'rejected', { message: STRINGS.thermalHalted });
+      return { ok: false, reason: STRINGS.thermalHalted };
+    }
     const { program, reason } = compileSource('run', source);
     if (program === null) return { ok: false, ...(reason !== undefined && { reason }) };
     // RUN executes the top-level body only; `every`/`when` belong to DEPLOY (TDD §5.1).
@@ -988,6 +1130,59 @@ export function createGameEngine(seed: number): GameEngine {
     };
   }
 
+  /**
+   * Manual heat control (M7). Routed through the same command implementations
+   * the CCL actuators use, so the panel and a script cannot diverge in cost or
+   * effect — the only thing automation buys is not having to be here.
+   */
+  function thermalControl(control: 'clock' | 'coolant'): ActionResult {
+    const name = control === 'clock' ? 'reduce_clock_speed' : 'boost_cooling';
+    if (!run.unlocks.thermal) {
+      terminal('error', STRINGS.thermalNoAccess);
+      return { ok: false, reason: STRINGS.thermalNoAccess };
+    }
+    terminal('input', `> ${name.toUpperCase()}`);
+    const derived = computeDerived(run.upgrades, run.jobs.lifetimeProcessed);
+    const { host } = makeHost(derived, true);
+    const outcome = host.callCommand(name, []);
+    if (outcome === undefined || outcome.kind !== 'ok') {
+      return { ok: false, reason: STRINGS.thermalControlRejected };
+    }
+    terminal('result', control === 'clock' ? STRINGS.thermalClockHeld : STRINGS.thermalCoolantOpen);
+    return { ok: true };
+  }
+
+  /**
+   * Thermal control view (M7). The readout is live from the start because the
+   * heat model always is; `unlocked` gates the controls, the coolant install and
+   * the demand windows.
+   */
+  function thermalView() {
+    const t = BALANCE.thermal;
+    const thermal = run.thermal;
+    const remainingTicks = demandWindowTicksRemaining(
+      thermal.clockTicks,
+      thermal.openedAtTick,
+      TICKS_PER_SEC,
+    );
+    return {
+      unlocked: run.unlocks.thermal,
+      temperatureC: run.resources.temperature.current,
+      ambientC: t.ambientC,
+      softThresholdC: t.softThresholdC,
+      hardThresholdC: t.hardThresholdC,
+      efficiency: thermalEfficiency(run.resources.temperature.current),
+      throttleRemainingSec: thermal.throttleRemainingSec,
+      boostRemainingSec: thermal.boostRemainingSec,
+      halted: thermal.halted,
+      shutdowns: thermal.shutdowns,
+      boostEngagements: thermal.boostEngagements,
+      coolingEnergySpent: thermal.coolingEnergySpent,
+      demandWindowOpen: thermal.demandWindowOpen,
+      windowSecRemaining: remainingTicks > 0 ? remainingTicks / TICKS_PER_SEC : null,
+    };
+  }
+
   /** Rebuild `compiled` from the saved source text (TDD §8: never persist ASTs). */
   function recompileDeployments(): void {
     compiled = new Map();
@@ -1060,6 +1255,9 @@ export function createGameEngine(seed: number): GameEngine {
           break;
         case 'TRADE':
           result = trade(action.good, action.side, action.units);
+          break;
+        case 'THERMAL_CONTROL':
+          result = thermalControl(action.control);
           break;
       }
       markDirty();
@@ -1224,6 +1422,7 @@ export function createGameEngine(seed: number): GameEngine {
             scheduling: run.unlocks.scheduler,
             loops: run.unlocks.loops,
             market: run.unlocks.market,
+            thermal: run.unlocks.thermal,
           },
           // API surface is unlock-gated (TDD §5.1): hidden until script access is
           // granted, and per-binding gates filter it further (M6).
@@ -1248,6 +1447,7 @@ export function createGameEngine(seed: number): GameEngine {
           scriptComputeTotal,
         },
         market: marketView(),
+        thermal: thermalView(),
         research: run.research.map((entry) => {
           const content = NARRATIVE_ENTRIES.find((n) => n.id === entry.entryId);
           return {
@@ -1268,7 +1468,7 @@ export function createGameEngine(seed: number): GameEngine {
 
     save(now: number): SaveFile {
       return {
-        version: 6,
+        version: 7,
         savedAt: now,
         meta: structuredClone(meta),
         run: structuredClone(run),
@@ -1314,11 +1514,26 @@ export function createGameEngine(seed: number): GameEngine {
           advanceMarketOffline(run.market, chunk * TICKS_PER_SEC, TICKS_PER_SEC);
           checkRegimeShift(run.market);
         }
+        // Demand windows keep opening while the sandbox is unattended, so the
+        // chunk is costed against whichever conditions held for most of it.
+        run.thermal.clockTicks += chunk * TICKS_PER_SEC;
+        run.thermal.demandWindowOpen = isDemandWindowOpen(
+          run.thermal.clockTicks,
+          run.thermal.openedAtTick,
+          TICKS_PER_SEC,
+        );
+        // Actuators are player inputs; nobody is here to press them (TDD §4.5).
+        run.thermal.throttleRemainingSec = 0;
+        run.thermal.boostRemainingSec = 0;
+        const env = currentThermalEnv(derived);
+
+        const beforeOps = deployedOpsTotal();
         totalActivations += runOfflineProcesses(chunk, derived, totalActivations);
+        const scriptHeatPerSec = heatOfOps(deployedOpsTotal() - beforeOps) / chunk;
 
         // Arrivals and processing are concurrent within a chunk, so daemons process
         // against the full inflow; the queue cap applies only to the leftover.
-        run.jobs.arrivalAccumulator += derived.arrivalPerSec * chunk;
+        run.jobs.arrivalAccumulator += derived.arrivalPerSec * env.arrivalMult * chunk;
         const arrivals = Math.floor(run.jobs.arrivalAccumulator);
         run.jobs.arrivalAccumulator -= arrivals;
         const queued = run.jobs.waiting + arrivals;
@@ -1332,8 +1547,20 @@ export function createGameEngine(seed: number): GameEngine {
           const budget = energy.current + derived.energyRegenPerSec * chunk;
           const fullSec = drainRate > 0 ? Math.min(chunk, budget / drainRate) : chunk;
           const throttledSec = chunk - fullSec;
-          const potential =
-            derived.workerJobsPerSec * (fullSec + throttledSec * w.energyThrottledFactor);
+          // The watchdog cannot be simulated tick by tick against a coarse chunk;
+          // over a chunk its effect is a ceiling on sustained throughput, which is
+          // what `sustainableJobsPerSec` computes (TDD §4.5 "the thermal watchdog
+          // is always active"). Degradation applies below that ceiling as usual.
+          const settled = settledTemperature(
+            heatOfJobs(derived.workerJobsPerSec),
+            scriptHeatPerSec,
+            env,
+          );
+          const thermalRate = Math.min(
+            derived.workerJobsPerSec * thermalEfficiency(settled),
+            sustainableJobsPerSec(env, scriptHeatPerSec),
+          );
+          const potential = thermalRate * (fullSec + throttledSec * w.energyThrottledFactor);
           processed = Math.floor(Math.min(queued, potential));
 
           const netCompute = BALANCE.jobs.computePerJob - w.computeOverheadPerJob;
@@ -1365,8 +1592,22 @@ export function createGameEngine(seed: number): GameEngine {
       for (const deployment of run.scheduler.deployments) {
         for (const runtime of deployment.processes) runtime.nextDueTick = run.tick;
       }
-      applyPoolCapacities(computeDerived(run.upgrades, run.jobs.lifetimeProcessed));
-      run.resources.temperature.current = BALANCE.resources.temperatureIdleC;
+      const finalDerived = computeDerived(run.upgrades, run.jobs.lifetimeProcessed);
+      applyPoolCapacities(finalDerived);
+      // The core returns at the temperature its last chunk's load settles at,
+      // rather than at ambient: coming back to a cold node after eight hours of
+      // production would quietly undo the model. A load the cooling cannot hold
+      // is handed back at the *resume* threshold rather than at the trip point —
+      // offline throughput was already capped at what the cooling supports, so
+      // the watchdog has been managing the node in its band, and returning the
+      // player to an instant shutdown they had no chance to prevent would be a
+      // punishment for being away rather than for anything they did.
+      const finalEnv = currentThermalEnv(finalDerived);
+      run.resources.temperature.current = Math.min(
+        BALANCE.thermal.resumeThresholdC,
+        settledTemperature(heatOfJobs(finalDerived.workerJobsPerSec), 0, finalEnv),
+      );
+      run.thermal.halted = false;
       checkUnlocks();
       checkNarrative();
 

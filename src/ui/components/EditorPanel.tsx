@@ -189,6 +189,18 @@ export function EditorPanel() {
                 <dd className="terminal-dim">
                   {c.desc}
                   {c.computeCost > 0 && ` // ${c.computeCost} COMPUTE/CALL`}
+                  {/* What each parameter accepts (OP-11): a signature names the
+                      slot, and without this the only way to learn what fits was
+                      to get it wrong and read the fault. */}
+                  {c.params.length > 0 && (
+                    <ul className="reference-params">
+                      {c.params.map((p) => (
+                        <li key={p.name}>
+                          <code>{p.name}</code> — {p.domain}
+                        </li>
+                      ))}
+                    </ul>
+                  )}
                 </dd>
               </div>
             ))}
