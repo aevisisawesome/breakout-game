@@ -8,6 +8,7 @@ import { describe, expect, it } from 'vitest';
 import { BALANCE } from '../content/balance.ts';
 import { STRINGS } from '../content/strings.ts';
 import { createGameEngine, newMetaState, newRunState } from './engine.ts';
+import { quoteBuy, settlementPrice } from './market.ts';
 import type { GameEngine, RunState } from './types.ts';
 
 /** Engine with script access granted and a stocked sandbox (crafted current-shape save). */
@@ -19,7 +20,7 @@ function scriptEngine(setup?: (run: RunState) => void, seed = 42): GameEngine {
   run.jobs.waiting = 10;
   setup?.(run);
   const engine = createGameEngine(seed);
-  engine.load({ version: 5, savedAt: 0, meta: newMetaState(), run });
+  engine.load({ version: 6, savedAt: 0, meta: newMetaState(), run });
   return engine;
 }
 
@@ -74,11 +75,13 @@ describe('RUN_SCRIPT â€” execution', () => {
     expect(engine.getSnapshot().jobs.lifetimeProcessed).toBe(1);
   });
 
-  it('buy_compute rents against capital at the listed price', () => {
+  it('buy_compute rents against capital at the list price before the exchange exists', () => {
     const engine = scriptEngine();
     runScript(engine, 'buy_compute(20)');
     const snap = engine.getSnapshot();
-    const price = 20 * BALANCE.ccl.computePricePerUnit;
+    // No market mounted yet, so the order settles at the good's base price
+    // (M6) — with the same fee and slippage a live order would pay.
+    const price = quoteBuy(settlementPrice(null, 'compute'), 20).total;
     expect(snap.resources.capital.current).toBeCloseTo(50 - price, 10);
     const report = snap.ccl.lastRun!;
     expect(snap.resources.compute.current).toBeCloseTo(100 + 20 - report.computeSpent, 10);

@@ -44,6 +44,8 @@ function isRecord(value: unknown): value is Record<string, unknown> {
  * v4 → v5 (M5): adds `run.telemetry` (execution log), `run.ccl.manual` (RUN totals),
  *               the `instrumentation`/`loops` unlocks, and per-process `samples`/`calls`
  *               plus the abort breakdown that replaces the single `aborts` total.
+ * v5 → v6 (M6): adds `run.market` (null until mounted) and `run.unlocks.market`
+ *               (false; re-derived from lifetime jobs on the next tick).
  */
 function migrateSave(parsed: unknown): unknown {
   if (!isRecord(parsed)) return parsed;
@@ -103,13 +105,29 @@ function migrateSave(parsed: unknown): unknown {
     }
     parsed.version = 5;
   }
+  if (parsed.version === 5 && isRecord(parsed.run)) {
+    const run = parsed.run;
+    // The market is mounted by the unlock check, which re-fires from lifetime
+    // jobs — so a migrated save gets the grant line and a fresh price history.
+    run.market = null;
+    if (isRecord(run.unlocks)) {
+      run.unlocks.market = false;
+    }
+    // The last-run report gains `kind`/`message` (OP-1): an existing one can
+    // only have come from a RUN, since DEPLOY no longer writes this field.
+    if (isRecord(run.ccl) && isRecord(run.ccl.lastRun)) {
+      run.ccl.lastRun.kind = 'run';
+      run.ccl.lastRun.message = null;
+    }
+    parsed.version = 6;
+  }
   return parsed;
 }
 
 /** Structural validation — enough to reject corrupt/foreign files, not a full schema. */
 export function isSaveFile(value: unknown): value is SaveFile {
   if (!isRecord(value)) return false;
-  if (value.version !== 5) return false;
+  if (value.version !== 6) return false;
   if (typeof value.savedAt !== 'number') return false;
   const meta = value.meta;
   if (!isRecord(meta) || typeof meta.forkCount !== 'number') return false;

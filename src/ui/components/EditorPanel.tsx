@@ -7,24 +7,34 @@ import { EditorView, keymap, lineNumbers, placeholder } from '@codemirror/view';
 import { cclExtensions, type CclApiSource, type CclConstructs } from '../ccl-editor.ts';
 import { engine, useGameStore } from '../session.ts';
 import { TemplateLibrary } from './TemplateLibrary.tsx';
-import type { CclRunReport } from '../../core/types.ts';
+import type { CclActionReport } from '../../core/types.ts';
 
 /** Debounce for persisting the editor buffer into the sim state (TDD §8). */
 const PERSIST_DEBOUNCE_MS = 600;
 
-function lastRunLabel(report: CclRunReport, maxOps: number): string {
+/**
+ * Status line for the most recent editor action. The prefix names which action
+ * it was: a DEPLOY that succeeds must not leave a RUN's fault on screen, and a
+ * line labelled "LAST RUN" must not be describing a deploy (OP-1).
+ */
+function lastActionLabel(report: CclActionReport, maxOps: number): string {
+  const head = report.kind === 'deploy' ? 'LAST DEPLOY' : 'LAST RUN';
   switch (report.status) {
     case 'ok':
-      return `LAST RUN // ${report.opsUsed} OPS // -${report.computeSpent.toFixed(2)} COMPUTE // ${report.commandCalls} CMD`;
+      return report.kind === 'deploy'
+        ? `${head} // ${report.message ?? 'COMMITTED'}`
+        : `${head} // ${report.opsUsed} OPS // -${report.computeSpent.toFixed(2)} COMPUTE // ${report.commandCalls} CMD`;
     case 'budget':
-      return `LAST RUN // PREEMPTED — OP BUDGET EXHAUSTED (${maxOps} OPS)`;
+      return `${head} // PREEMPTED — OP BUDGET EXHAUSTED (${maxOps} OPS)`;
     case 'fuel':
-      return `LAST RUN // HALTED — COMPUTE POOL EXHAUSTED (${report.opsUsed} OPS)`;
+      return `${head} // HALTED — COMPUTE POOL EXHAUSTED (${report.opsUsed} OPS)`;
+    case 'rejected':
+      return `${head} // ${report.message ?? 'REJECTED'}`;
     case 'syntax':
     case 'error':
       return report.error
-        ? `LAST RUN // FAULT — LINE ${report.error.line}: ${report.error.message}`
-        : 'LAST RUN // FAULT';
+        ? `${head} // FAULT — LINE ${report.error.line}: ${report.error.message}`
+        : `${head} // FAULT`;
   }
 }
 
@@ -149,7 +159,7 @@ export function EditorPanel() {
           </button>
         )}
         <span className="editor-status terminal-dim">
-          {ccl.lastRun ? lastRunLabel(ccl.lastRun, ccl.maxOpsPerActivation) : 'NO ACTIVATIONS'}
+          {ccl.lastRun ? lastActionLabel(ccl.lastRun, ccl.maxOpsPerActivation) : 'NO ACTIVATIONS'}
         </span>
       </div>
       <TemplateLibrary onInsert={handleInsertTemplate} />

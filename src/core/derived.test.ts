@@ -56,7 +56,9 @@ describe('computeDerived', () => {
         3 * def('batch-window').ramCostMb,
     );
     expect(d.energyRegenPerSec).toBeCloseTo(BALANCE.resources.energyRegenPerSec + 1.6, 10);
-    expect(d.energyDrainPerSec).toBeCloseTo(2 * BALANCE.workers.energyPerWorkerPerSec, 10);
+    // Drain tracks throughput, not head-count (M6, TDD §4.3), so the daemon
+    // scheduler patch's ×1.4 shows up in the power bill too.
+    expect(d.energyDrainPerSec).toBeCloseTo(2 * BALANCE.workers.energyPerWorkerPerSec * 1.4, 10);
   });
 
   it('steps base curves by lifetime jobs', () => {

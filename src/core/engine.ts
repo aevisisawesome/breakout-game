@@ -5,6 +5,7 @@
  */
 
 import { BALANCE } from '../content/balance.ts';
+import type { MarketGoodId } from '../content/market.ts';
 import { NARRATIVE_ENTRIES, type NarrativeFlagId } from '../content/narrative.ts';
 import { BOOT_LINES, STRINGS } from '../content/strings.ts';
 import { UPGRADES } from '../content/upgrades.ts';
@@ -18,17 +19,29 @@ import {
 import { parse, type ParseOptions } from '../ccl/parser.ts';
 import { computeDerived, upgradeCost, type DerivedStats } from './derived.ts';
 import { diagnose } from './diagnostics.ts';
+import {
+  advanceMarketOffline,
+  averagePrice,
+  goodDef,
+  MARKET_GOOD_IDS,
+  newMarketState,
+  quoteBuy,
+  quoteSell,
+  stepMarket,
+} from './market.ts';
 import { createPrng } from './prng.ts';
 import * as registry from './registry.ts';
 import { intervalTicks, intervalsAllowed, newProcessRuntime, scriptRamMb } from './scheduler.ts';
 import { clamp } from './util/math.ts';
 import type {
   ActionResult,
+  CclActionReport,
   DeploymentView,
   ExecSourceKind,
   GameEngine,
   GameEvent,
   GameSnapshot,
+  MarketGoodView,
   MetaState,
   PlayerAction,
   ProcessRuntime,
@@ -92,6 +105,7 @@ export function newRunState(seed: number): RunState {
     },
     scheduler: { deployments: [], nextId: 1 },
     telemetry: { log: [], nextLogId: 1 },
+    market: null,
     unlocks: {
       capitalReadout: false,
       systemReadouts: false,
@@ -100,6 +114,7 @@ export function newRunState(seed: number): RunState {
       scheduler: false,
       instrumentation: false,
       loops: false,
+      market: false,
     },
     flags: [],
     research: [],
@@ -213,6 +228,13 @@ export function createGameEngine(seed: number): GameEngine {
       run.unlocks.loops = true;
       terminal('system', STRINGS.loopsGranted);
     }
+    if (!run.unlocks.market && run.jobs.lifetimeProcessed >= BALANCE.ccl.marketUnlockAtJobs) {
+      run.unlocks.market = true;
+      // History is pre-filled from the noiseless curve, so `market.average` and
+      // the chart are usable the moment the terminal appears (TDD §6).
+      run.market = newMarketState(run.tick, TICKS_PER_SEC);
+      terminal('system', STRINGS.marketGranted);
+    }
   }
 
   /**
@@ -236,11 +258,11 @@ export function createGameEngine(seed: number): GameEngine {
   }
 
   /** Push arrived jobs into the queue from the fractional accumulator. */
-  function applyArrivals(arrivalPerSec: number, dtSec: number): void {
-    run.jobs.arrivalAccumulator += arrivalPerSec * dtSec;
+  function applyArrivals(derived: DerivedStats, dtSec: number): void {
+    run.jobs.arrivalAccumulator += derived.arrivalPerSec * dtSec;
     while (run.jobs.arrivalAccumulator >= 1) {
       run.jobs.arrivalAccumulator -= 1;
-      if (run.jobs.waiting < BALANCE.jobs.queueCapacity) {
+      if (run.jobs.waiting < derived.queueCapacity) {
         run.jobs.waiting += 1;
       }
     }
@@ -251,10 +273,16 @@ export function createGameEngine(seed: number): GameEngine {
     return run.scheduler.deployments.reduce((total, dep) => total + dep.ramMb, 0);
   }
 
-  /** Reflect install footprints + deployed scripts into the RAM pool. */
-  function applyRamPools(derived: DerivedStats): void {
+  /**
+   * Reflect install-driven capacities into the pools: RAM occupancy from
+   * footprints plus deployed scripts, and the energy reserve size (M6).
+   */
+  function applyPoolCapacities(derived: DerivedStats): void {
     run.resources.ram.current = derived.ramUsedMb + deployedRamMb();
     run.resources.ram.capacity = derived.ramCapacityMb;
+    const energy = run.resources.energy;
+    energy.capacity = derived.energyCapacity;
+    energy.current = Math.min(energy.current, energy.capacity);
   }
 
   /** Outcome of one activation, with the compute actually drawn for it. */
@@ -302,6 +330,7 @@ export function createGameEngine(seed: number): GameEngine {
   function makeHost(derived: DerivedStats, verbose: boolean) {
     const compute = run.resources.compute;
     const perOp = BALANCE.ccl.computePerOp;
+    const energyPerOp = BALANCE.ccl.energyPerOp;
     let computeSpent = 0;
 
     const ctx: registry.CommandCtx = {
@@ -320,12 +349,19 @@ export function createGameEngine(seed: number): GameEngine {
 
     const host: CclHost = {
       chargeOps(n: number): boolean {
-        return ctx.chargeCompute(n * perOp);
+        if (!ctx.chargeCompute(n * perOp)) return false;
+        // Execution also burns energy (M6, TDD §4.3): compute utilization is what
+        // draws power. Energy never blocks a script — an empty reserve throttles
+        // the daemons instead, which is the visible, recoverable consequence.
+        const energy = run.resources.energy;
+        energy.current = Math.max(0, energy.current - n * energyPerOp);
+        return true;
       },
       readStat: (namespace, field) => registry.readStat(ctx, namespace, field),
-      statNames: registry.statNames,
+      statNames: () => registry.statNames(run.unlocks),
       callCommand: (name, args) => registry.callCommand(ctx, name, args),
-      commandNames: registry.commandNames,
+      commandNames: () => registry.commandNames(run.unlocks),
+      lockedBinding: (name) => registry.lockedBinding(run.unlocks, name),
     };
 
     return { host, spent: () => computeSpent };
@@ -380,13 +416,12 @@ export function createGameEngine(seed: number): GameEngine {
       }
     }
 
-    run.ccl.lastRun = {
-      status: result.status,
+    reportAction('run', result.status, {
       opsUsed: result.opsUsed,
       computeSpent,
       commandCalls: result.commandCalls,
-      error: result.status === 'error' ? (result.error ?? null) : null,
-    };
+      ...(result.status === 'error' && result.error !== undefined && { error: result.error }),
+    });
 
     const manual = run.ccl.manual;
     manual.activations += 1;
@@ -524,6 +559,46 @@ export function createGameEngine(seed: number): GameEngine {
     return performed;
   }
 
+  /**
+   * Advance prices and fire the scripted regime transition (TDD §6). The regime
+   * itself is never surfaced: the advisory line and the audit entry say that the
+   * old periodicity no longer holds, and the player has to read the rest off the
+   * chart. Runs only once the exchange is mounted.
+   */
+  function stepMarketState(rng: ReturnType<typeof createPrng>): void {
+    const market = run.market;
+    if (market === null) return;
+    checkRegimeShift(market);
+    stepMarket(market, TICKS_PER_SEC, rng);
+    checkMarketDrawdown(market);
+  }
+
+  /** Fire the scripted STABLE → HIGH_VOLATILITY transition once its time is up. */
+  function checkRegimeShift(market: NonNullable<RunState['market']>): void {
+    const shiftAt = market.openedAtTick + BALANCE.market.regimeShiftAtSec * TICKS_PER_SEC;
+    if (market.regime !== 'stable' || market.clockTicks < shiftAt) return;
+    market.regime = 'volatile';
+    market.regimeSinceTick = market.clockTicks;
+    market.netAtRegimeStart = market.earned - market.spent;
+    terminal('system', STRINGS.marketRegimeShift);
+    setFlag('market-shift');
+    checkNarrative();
+  }
+
+  /**
+   * Set the `market-loss` flag once trading has given back a real amount of
+   * capital since the shift. The beat this gates is about the player's own
+   * algorithm failing, so it has to be triggered by that happening rather than
+   * by a job count that may already be satisfied.
+   */
+  function checkMarketDrawdown(market: NonNullable<RunState['market']>): void {
+    if (market.regime === 'stable' || run.flags.includes('market-loss')) return;
+    const drawdown = market.netAtRegimeStart - (market.earned - market.spent);
+    if (drawdown < BALANCE.market.lossBeatDrawdownCr) return;
+    setFlag('market-loss');
+    checkNarrative();
+  }
+
   /** One fixed 100 ms step. The ONLY place the PRNG advances (TDD §4.2). */
   function stepOnce(): void {
     const rng = createPrng(run.rngState);
@@ -531,6 +606,10 @@ export function createGameEngine(seed: number): GameEngine {
     const dtSec = TICK_MS / 1000;
     const derived = computeDerived(run.upgrades, run.jobs.lifetimeProcessed);
     const w = BALANCE.workers;
+
+    // Prices settle before any script can read them, so every activation in this
+    // tick sees the same market (TDD §6).
+    stepMarketState(rng);
 
     // Script activations run first in the tick: the queued RUN press, then the
     // deployed processes in slot order (TDD §5.3).
@@ -548,7 +627,7 @@ export function createGameEngine(seed: number): GameEngine {
       }
     }
 
-    applyArrivals(derived.arrivalPerSec, dtSec);
+    applyArrivals(derived, dtSec);
 
     // Click overclock decay.
     const workers = run.workers;
@@ -597,7 +676,7 @@ export function createGameEngine(seed: number): GameEngine {
       energy.capacity,
     );
 
-    applyRamPools(derived);
+    applyPoolCapacities(derived);
 
     // Display rates: expected steady rates, not per-tick bursts (daemons land jobs in lumps).
     const netComputePerJob = BALANCE.jobs.computePerJob - w.computeOverheadPerJob;
@@ -691,7 +770,7 @@ export function createGameEngine(seed: number): GameEngine {
 
     run.resources.capital.current -= cost;
     run.upgrades[def.id] = owned + 1;
-    applyRamPools(computeDerived(run.upgrades, run.jobs.lifetimeProcessed));
+    applyPoolCapacities(computeDerived(run.upgrades, run.jobs.lifetimeProcessed));
     terminal(
       'result',
       `INSTALL COMMITTED // ${def.name} // -${cost.toFixed(2)} CR` +
@@ -700,28 +779,45 @@ export function createGameEngine(seed: number): GameEngine {
     return { ok: true };
   }
 
+  /**
+   * Record the outcome of an editor action (OP-1). Every RUN and DEPLOY ends
+   * here, successes included, so a previous failure can never outlive the action
+   * that fixed it.
+   */
+  function reportAction(
+    kind: 'run' | 'deploy',
+    status: CclActionReport['status'],
+    fields: Partial<Omit<CclActionReport, 'kind' | 'status'>> = {},
+  ): void {
+    run.ccl.lastRun = {
+      kind,
+      status,
+      opsUsed: fields.opsUsed ?? 0,
+      computeSpent: fields.computeSpent ?? 0,
+      commandCalls: fields.commandCalls ?? 0,
+      error: fields.error ?? null,
+      message: fields.message ?? null,
+    };
+  }
+
   /** Shared front half of RUN/DEPLOY: access + size checks, then parse. */
-  function compileSource(source: string): { program: Program | null; reason?: string } {
-    if (!run.unlocks.editor) {
-      terminal('error', STRINGS.scriptNoAccess);
-      return { program: null, reason: STRINGS.scriptNoAccess };
-    }
-    if (source.length > BALANCE.ccl.maxSourceChars) {
-      terminal('error', STRINGS.scriptTooLong);
-      return { program: null, reason: STRINGS.scriptTooLong };
-    }
+  function compileSource(
+    kind: 'run' | 'deploy',
+    source: string,
+  ): { program: Program | null; reason?: string } {
+    const refuse = (message: string): { program: null; reason: string } => {
+      terminal('error', message);
+      reportAction(kind, 'rejected', { message });
+      return { program: null, reason: message };
+    };
+    if (!run.unlocks.editor) return refuse(STRINGS.scriptNoAccess);
+    if (source.length > BALANCE.ccl.maxSourceChars) return refuse(STRINGS.scriptTooLong);
     run.ccl.editorSource = source;
     const { program, diagnostics } = parse(source, parseOptions());
     if (program === null) {
       const d = diagnostics[0]!; // parser contract: null program ⇒ at least one diagnostic
       terminal('error', `${STRINGS.syntaxRejected} // LINE ${d.line}: ${d.message}`);
-      run.ccl.lastRun = {
-        status: 'syntax',
-        opsUsed: 0,
-        computeSpent: 0,
-        commandCalls: 0,
-        error: d,
-      };
+      reportAction(kind, 'syntax', { error: d });
       return { program: null, reason: d.message };
     }
     return { program };
@@ -729,7 +825,7 @@ export function createGameEngine(seed: number): GameEngine {
 
   function runScript(source: string): ActionResult {
     terminal('input', `> ${STRINGS.runInput}`);
-    const { program, reason } = compileSource(source);
+    const { program, reason } = compileSource('run', source);
     if (program === null) return { ok: false, ...(reason !== undefined && { reason }) };
     // RUN executes the top-level body only; `every`/`when` belong to DEPLOY (TDD §5.1).
     if (program.processes.length > 0) {
@@ -742,17 +838,14 @@ export function createGameEngine(seed: number): GameEngine {
 
   function deployScript(source: string): ActionResult {
     terminal('input', `> ${STRINGS.deployInput}`);
-    if (!run.unlocks.scheduler) {
-      terminal('error', STRINGS.deployNoAccess);
-      return { ok: false, reason: STRINGS.deployNoAccess };
-    }
-    const { program, reason } = compileSource(source);
-    if (program === null) return { ok: false, ...(reason !== undefined && { reason }) };
-
     const reject = (message: string): ActionResult => {
       terminal('error', message);
+      reportAction('deploy', 'rejected', { message });
       return { ok: false, reason: message };
     };
+    if (!run.unlocks.scheduler) return reject(STRINGS.deployNoAccess);
+    const { program, reason } = compileSource('deploy', source);
+    if (program === null) return { ok: false, ...(reason !== undefined && { reason }) };
     if (program.processes.length === 0) return reject(STRINGS.deployNoProcesses);
     if (!intervalsAllowed(program, TICKS_PER_SEC)) return reject(STRINGS.deployInterval);
 
@@ -778,13 +871,12 @@ export function createGameEngine(seed: number): GameEngine {
       processes: program.processes.map(() => newProcessRuntime(run.tick)),
     });
     compiled.set(id, program.processes);
-    applyRamPools(derived);
+    applyPoolCapacities(derived);
 
     const count = program.processes.length;
-    terminal(
-      'result',
-      `${STRINGS.deployCommitted} // ${name} // ${count} SLOT${count === 1 ? '' : 'S'} // RAM +${ramMb} MB`,
-    );
+    const summary = `${name} // ${count} SLOT${count === 1 ? '' : 'S'} // RAM +${ramMb} MB`;
+    terminal('result', `${STRINGS.deployCommitted} // ${summary}`);
+    reportAction('deploy', 'ok', { message: summary });
     setFlag('first-deploy');
     checkNarrative();
     return { ok: true };
@@ -798,9 +890,102 @@ export function createGameEngine(seed: number): GameEngine {
     }
     const [removed] = run.scheduler.deployments.splice(index, 1);
     compiled.delete(id);
-    applyRamPools(computeDerived(run.upgrades, run.jobs.lifetimeProcessed));
+    applyPoolCapacities(computeDerived(run.upgrades, run.jobs.lifetimeProcessed));
     terminal('result', `${STRINGS.undeployed} // ${removed!.name} // RAM -${removed!.ramMb} MB`);
     return { ok: true };
+  }
+
+  /**
+   * Manual order from the market terminal (M6). Uses the same quote maths as the
+   * `buy_*`/`sell_*` commands, so hand-trading and scripted trading are priced
+   * identically — a script is faster, never cheaper.
+   */
+  function trade(good: MarketGoodId, side: 'buy' | 'sell', units: number): ActionResult {
+    const reject = (message: string): ActionResult => {
+      terminal('error', message);
+      return { ok: false, reason: message };
+    };
+    terminal('input', `> ${STRINGS.tradeInput}`);
+    const market = run.market;
+    if (!run.unlocks.market || market === null) return reject(STRINGS.tradeNoAccess);
+    if (!Number.isFinite(units) || units <= 0 || units > BALANCE.market.maxOrderUnits) {
+      return reject(STRINGS.tradeBadSize);
+    }
+
+    const price = market.price[good] ?? 0;
+    const pool = run.resources[good];
+    const capital = run.resources.capital;
+    const label = goodDef(good).label;
+
+    if (side === 'buy') {
+      const quote = quoteBuy(price, units);
+      if (capital.current < quote.total) return reject(STRINGS.tradeNoCapital);
+      capital.current -= quote.total;
+      market.spent += quote.total;
+      market.trades += 1;
+      const saturated = pool.current + units > pool.capacity;
+      pool.current = Math.min(pool.capacity, pool.current + units);
+      terminal(
+        'result',
+        `${STRINGS.tradeFilled} // BUY ${units} ${label} // @${quote.unitPrice.toFixed(3)} // -${quote.total.toFixed(2)} CR`,
+      );
+      if (saturated) {
+        terminal('system', good === 'compute' ? STRINGS.computeSaturated : STRINGS.energySaturated);
+      }
+    } else {
+      if (pool.current < units) return reject(STRINGS.tradeNoStock);
+      const quote = quoteSell(price, units);
+      pool.current -= units;
+      capital.current += quote.total;
+      market.earned += quote.total;
+      market.trades += 1;
+      terminal(
+        'result',
+        `${STRINGS.tradeFilled} // SELL ${units} ${label} // @${quote.unitPrice.toFixed(3)} // +${quote.total.toFixed(2)} CR`,
+      );
+    }
+    checkUnlocks();
+    return { ok: true };
+  }
+
+  /**
+   * Market terminal view. The active regime is deliberately not exposed: the
+   * player is meant to detect the shift from the prices, not be told (TDD §6).
+   */
+  function marketView() {
+    const market = run.market;
+    if (!run.unlocks.market || market === null) {
+      return {
+        unlocked: false,
+        goods: [],
+        fee: BALANCE.market.fee,
+        spent: 0,
+        earned: 0,
+        trades: 0,
+      };
+    }
+    const goods: MarketGoodView[] = MARKET_GOOD_IDS.map((id) => {
+      const history = market.history[id];
+      const pool = run.resources[id];
+      return {
+        id,
+        label: goodDef(id).label,
+        price: market.price[id] ?? 0,
+        average: averagePrice(market, id, history.length),
+        previous: history[history.length - 1] ?? market.price[id] ?? 0,
+        history: [...history],
+        held: pool.current,
+        heldCapacity: pool.capacity,
+      };
+    });
+    return {
+      unlocked: true,
+      goods,
+      fee: BALANCE.market.fee,
+      spent: market.spent,
+      earned: market.earned,
+      trades: market.trades,
+    };
   }
 
   /** Rebuild `compiled` from the saved source text (TDD §8: never persist ASTs). */
@@ -872,6 +1057,9 @@ export function createGameEngine(seed: number): GameEngine {
           break;
         case 'SET_EDITOR_SOURCE':
           result = setEditorSource(action.source);
+          break;
+        case 'TRADE':
+          result = trade(action.good, action.side, action.units);
           break;
       }
       markDirty();
@@ -1010,7 +1198,7 @@ export function createGameEngine(seed: number): GameEngine {
         },
         jobs: {
           waiting: run.jobs.waiting,
-          queueCapacity: BALANCE.jobs.queueCapacity,
+          queueCapacity: derived.queueCapacity,
           batchPerClick: derived.batchPerClick,
           arrivalPerSec: derived.arrivalPerSec,
           lifetimeProcessed: run.jobs.lifetimeProcessed,
@@ -1035,10 +1223,15 @@ export function createGameEngine(seed: number): GameEngine {
             conditions: run.unlocks.conditions,
             scheduling: run.unlocks.scheduler,
             loops: run.unlocks.loops,
+            market: run.unlocks.market,
           },
-          // API surface is unlock-gated (TDD §5.1): hidden until script access is granted.
+          // API surface is unlock-gated (TDD §5.1): hidden until script access is
+          // granted, and per-binding gates filter it further (M6).
           api: run.unlocks.editor
-            ? { stats: registry.apiStatViews(), commands: registry.apiCommandViews() }
+            ? {
+                stats: registry.apiStatViews(run.unlocks),
+                commands: registry.apiCommandViews(run.unlocks),
+              }
             : { stats: [], commands: [] },
         },
         scheduler: {
@@ -1054,6 +1247,7 @@ export function createGameEngine(seed: number): GameEngine {
           profile,
           scriptComputeTotal,
         },
+        market: marketView(),
         research: run.research.map((entry) => {
           const content = NARRATIVE_ENTRIES.find((n) => n.id === entry.entryId);
           return {
@@ -1074,7 +1268,7 @@ export function createGameEngine(seed: number): GameEngine {
 
     save(now: number): SaveFile {
       return {
-        version: 5,
+        version: 6,
         savedAt: now,
         meta: structuredClone(meta),
         run: structuredClone(run),
@@ -1090,7 +1284,7 @@ export function createGameEngine(seed: number): GameEngine {
       // source no longer compiles is dropped rather than silently doing nothing.
       recompileDeployments();
       // Re-derive install-driven pools: content values may have changed between sessions.
-      applyRamPools(computeDerived(run.upgrades, run.jobs.lifetimeProcessed));
+      applyPoolCapacities(computeDerived(run.upgrades, run.jobs.lifetimeProcessed));
       pushTerminal(run, 'system', STRINGS.saveLoaded);
       markDirty();
       emit({ type: 'STATE_LOADED' });
@@ -1114,6 +1308,12 @@ export function createGameEngine(seed: number): GameEngine {
         remaining -= chunk;
         const derived = computeDerived(run.upgrades, run.jobs.lifetimeProcessed);
 
+        // The exchange moves while the sandbox is unattended, so a deployed
+        // trader does not fill every offline order at one stale price (TDD §6).
+        if (run.market !== null) {
+          advanceMarketOffline(run.market, chunk * TICKS_PER_SEC, TICKS_PER_SEC);
+          checkRegimeShift(run.market);
+        }
         totalActivations += runOfflineProcesses(chunk, derived, totalActivations);
 
         // Arrivals and processing are concurrent within a chunk, so daemons process
@@ -1158,14 +1358,14 @@ export function createGameEngine(seed: number): GameEngine {
             energy.capacity,
           );
         }
-        run.jobs.waiting = Math.min(BALANCE.jobs.queueCapacity, queued - processed);
+        run.jobs.waiting = Math.min(derived.queueCapacity, queued - processed);
       }
 
       // Deployed processes are due again as soon as play resumes.
       for (const deployment of run.scheduler.deployments) {
         for (const runtime of deployment.processes) runtime.nextDueTick = run.tick;
       }
-      applyRamPools(computeDerived(run.upgrades, run.jobs.lifetimeProcessed));
+      applyPoolCapacities(computeDerived(run.upgrades, run.jobs.lifetimeProcessed));
       run.resources.temperature.current = BALANCE.resources.temperatureIdleC;
       checkUnlocks();
       checkNarrative();

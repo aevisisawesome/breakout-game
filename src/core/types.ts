@@ -5,6 +5,7 @@
 
 import type { CclDiagnostic } from '../ccl/ast.ts';
 import type { CclRunStatus } from '../ccl/interpreter.ts';
+import type { MarketGoodId, MarketRegimeId } from '../content/market.ts';
 import type { NarrativeFlagId } from '../content/narrative.ts';
 
 // ---------------------------------------------------------------------------
@@ -61,14 +62,23 @@ export interface UnlockState {
   instrumentation: boolean;
   /** Tier 6 (M5): `for i in range(n)` parses, subject to the iteration limit. */
   loops: boolean;
+  /** M6: the market terminal appears and the `market.*` / trade bindings bind. */
+  market: boolean;
 }
 
 // ---------------------------------------------------------------------------
 // CCL scripting state (M3, TDD §5)
 
-/** Result summary of the most recent RUN activation (or syntax rejection). */
-export interface CclRunReport {
-  status: 'ok' | 'syntax' | 'budget' | 'fuel' | 'error';
+/**
+ * Result summary of the most recent editor action — a RUN activation or a
+ * DEPLOY (OP-1: DEPLOY used to write a field labelled "LAST RUN" and a success
+ * never cleared an earlier failure, so a stale fault could sit on screen
+ * indefinitely). Every completed action overwrites this, including successes.
+ */
+export interface CclActionReport {
+  kind: 'run' | 'deploy';
+  /** 'rejected' covers the non-positioned deploy refusals (slots, RAM, interval). */
+  status: 'ok' | 'syntax' | 'budget' | 'fuel' | 'error' | 'rejected';
   /** Op-units consumed by the interpreter. */
   opsUsed: number;
   /** Total compute drawn (op fuel + command costs). */
@@ -77,6 +87,8 @@ export interface CclRunReport {
   commandCalls: number;
   /** Positioned problem for 'syntax'/'error'; null otherwise. */
   error: CclDiagnostic | null;
+  /** Diegetic reason with no source position ('rejected'), or a success note. */
+  message: string | null;
 }
 
 export interface CclState {
@@ -84,7 +96,8 @@ export interface CclState {
   editorSource: string;
   /** Lifetime RUN activations this run. */
   runCount: number;
-  lastRun: CclRunReport | null;
+  /** Outcome of the most recent RUN or DEPLOY; drives the editor's status line. */
+  lastRun: CclActionReport | null;
   /** Lifetime totals across RUN activations, for the profiler's compute share (M5). */
   manual: ActivationTotals;
 }
@@ -188,6 +201,44 @@ export interface TelemetryState {
   nextLogId: number;
 }
 
+// ---------------------------------------------------------------------------
+// Market (M6, TDD §6)
+
+/**
+ * Live market state. The regime is hidden from the player by design — only
+ * prices are visible — so nothing here is surfaced in the snapshot except the
+ * prices, the history and the player's own trade totals.
+ */
+export interface MarketState {
+  regime: MarketRegimeId;
+  /**
+   * The market's own clock, in ticks. Separate from `run.tick` because offline
+   * catch-up advances resources without advancing the sim clock (TDD §4.5), and
+   * a frozen price series there would be exploitable.
+   */
+  clockTicks: number;
+  /** Clock value at which the market terminal was mounted. */
+  openedAtTick: number;
+  /** Clock value of the most recent regime transition. */
+  regimeSinceTick: number;
+  /**
+   * Trading net (`earned - spent`) at the moment the current regime began, so a
+   * drawdown can be measured against this regime rather than the whole run.
+   */
+  netAtRegimeStart: number;
+  /** Bounded random walk per good, stepped once per sample tick. */
+  noise: Record<MarketGoodId, number>;
+  /** Current price per good in CR, recomputed every tick. */
+  price: Record<MarketGoodId, number>;
+  /** Price history ring buffer per good, oldest first (TDD §6). */
+  history: Record<MarketGoodId, number[]>;
+  /** Lifetime capital spent on buys, for the market terminal. */
+  spent: number;
+  /** Lifetime capital received from sells. */
+  earned: number;
+  trades: number;
+}
+
 /** Fixed-automation state (M2, TDD §4.4). Daemon counts live in `upgrades`. */
 export interface WorkerState {
   /** Fractional job-processing accumulator across all daemons. */
@@ -217,6 +268,8 @@ export interface RunState {
   ccl: CclState;
   scheduler: SchedulerState;
   telemetry: TelemetryState;
+  /** Null until the market terminal is mounted (M6). */
+  market: MarketState | null;
   unlocks: UnlockState;
   /** Milestone flags that gate narrative entries a job count cannot express. */
   flags: NarrativeFlagId[];
@@ -240,17 +293,18 @@ export interface MetaState {
  * v1 (M1) lacked `run.upgrades`/`run.workers`; v2 (M2) lacked `run.ccl` and
  * `run.unlocks.editor`; v3 (M3) lacked `run.scheduler`, `run.flags` and the
  * `conditions`/`scheduler` unlocks; v4 (M4) lacked `run.telemetry`, `run.ccl.manual`,
- * the `instrumentation`/`loops` unlocks and the per-process abort breakdown.
+ * the `instrumentation`/`loops` unlocks and the per-process abort breakdown;
+ * v5 (M5) lacked `run.market` and `run.unlocks.market`.
  */
-export interface SaveFileV5 {
-  version: 5;
+export interface SaveFileV6 {
+  version: 6;
   /** Epoch ms at save time, for offline progression (TDD §4.5). */
   savedAt: number;
   meta: MetaState;
   run: RunState;
 }
 
-export type SaveFile = SaveFileV5;
+export type SaveFile = SaveFileV6;
 
 // ---------------------------------------------------------------------------
 // Actions in, events out (TDD §3.1, §11)
@@ -265,7 +319,9 @@ export type PlayerAction =
   /** Remove a deployment, freeing its slots and RAM. */
   | { type: 'UNDEPLOY_SCRIPT'; id: string }
   /** Persist the editor buffer (debounced by the UI); no execution. */
-  | { type: 'SET_EDITOR_SOURCE'; source: string };
+  | { type: 'SET_EDITOR_SOURCE'; source: string }
+  /** Manual market order from the market terminal (M6). */
+  | { type: 'TRADE'; good: MarketGoodId; side: 'buy' | 'sell'; units: number };
 
 export interface ActionResult {
   ok: boolean;
@@ -323,8 +379,39 @@ export interface GameSnapshot {
   ccl: CclView;
   scheduler: SchedulerView;
   telemetry: TelemetryView;
+  market: MarketView;
   research: readonly ResearchEntryView[];
   terminal: readonly TerminalLine[];
+}
+
+/** One tradable good resolved for the market terminal. */
+export interface MarketGoodView {
+  id: MarketGoodId;
+  label: string;
+  price: number;
+  /** Mean of the whole retained history — the reference line on the chart. */
+  average: number;
+  /** Price one sample ago, for the direction indicator. */
+  previous: number;
+  /** Price history, oldest first (TDD §6 ring buffer). */
+  history: readonly number[];
+  /** How much of this good the player currently holds (buffer/reserve level). */
+  held: number;
+  heldCapacity: number;
+}
+
+/**
+ * Market terminal view (M6). The active regime is deliberately absent: regimes
+ * are hidden state and the player must read them out of the prices (TDD §6).
+ */
+export interface MarketView {
+  unlocked: boolean;
+  goods: readonly MarketGoodView[];
+  /** Flat transaction fee as a fraction, quoted in the terminal. */
+  fee: number;
+  spent: number;
+  earned: number;
+  trades: number;
 }
 
 /** CCL read binding resolved for display (reference panel + autocomplete). */
@@ -348,9 +435,9 @@ export interface CclView {
   /** Largest `range(n)` the parser currently accepts (M5). */
   iterationLimit: number;
   runCount: number;
-  lastRun: Readonly<CclRunReport> | null;
+  lastRun: Readonly<CclActionReport> | null;
   /** Language tiers the player has unlocked — drives parsing and the editor linter. */
-  constructs: { conditions: boolean; scheduling: boolean; loops: boolean };
+  constructs: { conditions: boolean; scheduling: boolean; loops: boolean; market: boolean };
   /** Unlock-gated API surface (empty until the editor unlocks). */
   api: {
     stats: readonly CclApiStatView[];

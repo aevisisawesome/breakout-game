@@ -31,9 +31,19 @@ export interface CclHost {
   readStat(namespace: string, field: string): CclValue | undefined;
   /** All readable dotted names, e.g. "stats.cash" (for suggestions). */
   statNames(): readonly string[];
-  /** Execute a command. Undefined = unknown command. */
+  /**
+   * Execute a command. Dotted names (`market.price`) are namespaced calls —
+   * the interpreter looks them up here too. Undefined = unknown command.
+   */
   callCommand(name: string, args: readonly CclValue[]): CclCommandOutcome | undefined;
   commandNames(): readonly string[];
+  /**
+   * Diegetic message for a binding the player has not unlocked yet, or null
+   * when the name is simply unknown. Keeps a locked read/command explaining the
+   * tier instead of reading as a typo (the same contract the parser has for
+   * locked keywords).
+   */
+  lockedBinding?(name: string): string | null;
 }
 
 export type CclRunStatus = 'ok' | 'budget' | 'fuel' | 'error';
@@ -166,9 +176,11 @@ function createActivation(host: CclHost, opBudget: number) {
 
   function evalIdent(node: Extract<Expr, { kind: 'ident' }>): CclValue {
     if (env.has(node.name)) return env.get(node.name) as CclValue;
-    const namespaces = new Set(host.statNames().map((n) => n.split('.')[0] ?? n));
+    const namespaces = knownNamespaces();
     if (namespaces.has(node.name)) {
-      const example = host.statNames().find((n) => n.startsWith(`${node.name}.`)) ?? '';
+      const example =
+        [...host.statNames(), ...host.commandNames()].find((n) => n.startsWith(`${node.name}.`)) ??
+        '';
       throw fault(
         `'${node.name}' is a data channel — read one of its values, like ${example}.`,
         node.span,
@@ -185,11 +197,24 @@ function createActivation(host: CclHost, opBudget: number) {
     );
   }
 
+  /** Namespaces that exist at all: those carrying reads, and those carrying calls. */
+  function knownNamespaces(): Set<string> {
+    const names = new Set<string>();
+    for (const name of host.statNames()) names.add(name.split('.')[0] ?? name);
+    for (const name of host.commandNames()) {
+      if (name.includes('.')) names.add(name.split('.')[0] ?? name);
+    }
+    return names;
+  }
+
   function evalMember(node: Extract<Expr, { kind: 'member' }>): CclValue {
     const value = host.readStat(node.object, node.field);
     if (value !== undefined) return value;
+    const dottedName = `${node.object}.${node.field}`;
+    const locked = host.lockedBinding?.(dottedName) ?? null;
+    if (locked !== null) throw fault(locked, node.span);
     const statNames = host.statNames();
-    const namespaces = new Set(statNames.map((n) => n.split('.')[0] ?? n));
+    const namespaces = knownNamespaces();
     if (!namespaces.has(node.object)) {
       const known = [...namespaces].join(', ');
       const suggestion = suggestName(node.object, namespaces);
@@ -210,22 +235,29 @@ function createActivation(host: CclHost, opBudget: number) {
 
   function evalCall(node: Extract<Expr, { kind: 'call' }>): CclValue {
     const callee = node.callee;
-    if (callee.kind === 'member') {
-      throw fault(
-        `'${callee.object}.${callee.field}' is a readable value, not a command you can call.`,
-        node.span,
-      );
-    }
-    if (callee.kind !== 'ident') {
+    // Namespaced calls (`market.price("compute")`) resolve through the same
+    // command table as plain ones, keyed by their dotted name (TDD §5.1).
+    const name =
+      callee.kind === 'member'
+        ? `${callee.object}.${callee.field}`
+        : callee.kind === 'ident'
+          ? callee.name
+          : null;
+    if (name === null) {
       throw fault('Only named commands can be called, like process_job().', node.span);
     }
     const args = node.args.map((arg) => evalExpr(arg));
     commandCalls += 1;
-    const outcome = host.callCommand(callee.name, args);
+    const outcome = host.callCommand(name, args);
     if (outcome === undefined) {
-      const suggestion = suggestName(callee.name, host.commandNames());
+      const locked = host.lockedBinding?.(name) ?? null;
+      if (locked !== null) throw fault(locked, callee.span);
+      if (callee.kind === 'member' && host.readStat(callee.object, callee.field) !== undefined) {
+        throw fault(`'${name}' is a readable value, not a command you can call.`, node.span);
+      }
+      const suggestion = suggestName(name, host.commandNames());
       throw fault(
-        `'${callee.name}' is not a command.` +
+        `'${name}' is not a command.` +
           (suggestion !== null ? ` Did you mean '${suggestion}'?` : ''),
         callee.span,
       );

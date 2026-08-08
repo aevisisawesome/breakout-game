@@ -8,6 +8,7 @@ import { describe, expect, it } from 'vitest';
 
 import { parse } from '../ccl/parser.ts';
 import { BALANCE } from '../content/balance.ts';
+import { CCL_COMMAND_DOCS, CCL_STAT_DOCS } from '../content/cclApi.ts';
 import { TEMPLATES } from '../content/templates.ts';
 import { createGameEngine, newMetaState, newRunState } from './engine.ts';
 import { clampParam, renderTemplate, templateDefaults } from './templates.ts';
@@ -74,6 +75,15 @@ describe('every template compiles under its declared tier', () => {
 
     it(`${def.id} genuinely needs the tier it declares`, () => {
       const source = renderTemplate(def, templateDefaults(def));
+      if (def.requires === 'market') {
+        // 'market' gates bindings, not grammar (M6): the source parses either
+        // way, so what must be true is that it uses a binding the gate hides.
+        const gated = [...CCL_STAT_DOCS, ...CCL_COMMAND_DOCS]
+          .filter((doc) => doc.requires === 'market')
+          .map((doc) => doc.name);
+        expect(gated.some((name) => source.includes(name))).toBe(true);
+        return;
+      }
       const withoutTier = { ...granted, [def.requires]: false };
       expect(parse(source, withoutTier).diagnostics.length).toBeGreaterThan(0);
     });
@@ -90,7 +100,7 @@ describe('generated code is accepted by the engine', () => {
     run.resources.capital.current = 500;
     run.jobs.waiting = 30;
     const engine = createGameEngine(42);
-    engine.load({ version: 5, savedAt: 0, meta: newMetaState(), run });
+    engine.load({ version: 6, savedAt: 0, meta: newMetaState(), run });
 
     const def = TEMPLATES.find((t) => t.id === 'auto-processor')!;
     const source = renderTemplate(def, templateDefaults(def));

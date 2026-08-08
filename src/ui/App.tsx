@@ -5,6 +5,7 @@ import { engine, useGameStore } from './session.ts';
 import { EditorPanel } from './components/EditorPanel.tsx';
 import { ExecutePanel } from './components/ExecutePanel.tsx';
 import { ExecutionLog } from './components/ExecutionLog.tsx';
+import { MarketPanel } from './components/MarketPanel.tsx';
 import { ProcessMonitor } from './components/ProcessMonitor.tsx';
 import { ProfilerPanel } from './components/ProfilerPanel.tsx';
 import { ResearchFeed } from './components/ResearchFeed.tsx';
@@ -52,6 +53,7 @@ export function App() {
         </section>
         <aside className="side-column">
           <ResourcePanel />
+          <MarketPanel />
           <ProcessMonitor />
           <ProfilerPanel />
           <UpgradePanel />

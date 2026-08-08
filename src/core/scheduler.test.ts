@@ -22,7 +22,7 @@ function schedulerEngine(setup?: (run: RunState) => void, seed = 42): GameEngine
   run.jobs.waiting = 40;
   setup?.(run);
   const engine = createGameEngine(seed);
-  engine.load({ version: 5, savedAt: 0, meta: newMetaState(), run });
+  engine.load({ version: 6, savedAt: 0, meta: newMetaState(), run });
   return engine;
 }
 
@@ -248,11 +248,14 @@ describe('scheduling semantics', () => {
 
 describe('process monitor', () => {
   it('counts activations, ops, compute and in-game failures', () => {
-    const engine = schedulerEngine();
-    // The rental is far beyond the capital on hand, so every activation logs a failure.
+    const engine = schedulerEngine((run) => {
+      run.resources.capital.current = 1;
+    });
+    // A legal order the sandbox cannot afford, so every activation logs an
+    // in-game failure (an illegal order size would be a misuse, i.e. an abort).
     engine.dispatch({
       type: 'DEPLOY_SCRIPT',
-      source: 'every 1 seconds {\n  process_job()\n  buy_compute(1000000)\n}',
+      source: `every 1 seconds {\n  process_job()\n  buy_compute(${BALANCE.market.maxOrderUnits})\n}`,
     });
     advanceSec(engine, 5);
 

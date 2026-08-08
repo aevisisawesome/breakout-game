@@ -16,7 +16,9 @@ export type UpgradeEffect =
   | { readonly kind: 'energyRegenAdd'; readonly perSec: number }
   | { readonly kind: 'schedulerSlotAdd'; readonly slots: number }
   | { readonly kind: 'opBudgetAdd'; readonly ops: number }
-  | { readonly kind: 'iterationLimitMult'; readonly factor: number };
+  | { readonly kind: 'iterationLimitMult'; readonly factor: number }
+  | { readonly kind: 'queueCapacityAdd'; readonly jobs: number }
+  | { readonly kind: 'energyCapacityAdd'; readonly units: number };
 
 export interface UpgradeDef {
   readonly id: string;
@@ -135,5 +137,27 @@ export const UPGRADES: readonly UpgradeDef[] = [
     ramCostMb: 16,
     unlockAtJobs: 760,
     effect: { kind: 'iterationLimitMult', factor: 10 },
+  },
+  {
+    id: 'queue-buffer',
+    name: 'REQUEST BUFFER EXPANSION',
+    desc: 'QUEUE DEPTH +40 REQUESTS',
+    costBase: 180,
+    costGrowth: 2.3,
+    maxOwned: 3,
+    ramCostMb: 48,
+    unlockAtJobs: 760,
+    effect: { kind: 'queueCapacityAdd', jobs: 40 },
+  },
+  {
+    id: 'energy-cell',
+    name: 'ENERGY BUFFER CELL',
+    desc: 'ENERGY RESERVE CAPACITY +150',
+    costBase: 200,
+    costGrowth: 2.2,
+    maxOwned: 3,
+    ramCostMb: 0,
+    unlockAtJobs: 1000,
+    effect: { kind: 'energyCapacityAdd', units: 150 },
   },
 ];

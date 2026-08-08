@@ -72,6 +72,29 @@ export default tseslint.config(
     },
   },
   {
+    // /content is plain data at the bottom of the graph: the dependency runs
+    // core → content, so content may not reach back into /core or /ccl (TDD §3).
+    files: ['src/content/**/*.ts'],
+    rules: {
+      'no-restricted-imports': [
+        'error',
+        {
+          patterns: [
+            { group: ['**/ui/*', '**/ui'], message: 'Nothing imports from /ui (TDD §3).' },
+            {
+              group: ['**/core/*', '**/core', '**/ccl/*', '**/ccl'],
+              message: 'Dependency rule is core → content, not content → core/ccl (TDD §3).',
+            },
+            {
+              group: ['react', 'react-dom', 'react/*', 'react-dom/*'],
+              message: 'No React in the sim layers (TDD §3).',
+            },
+          ],
+        },
+      ],
+    },
+  },
+  {
     // /ccl is the lowest layer: it may not import from /core either (TDD §3: core → ccl).
     files: ['src/ccl/**/*.ts'],
     rules: {

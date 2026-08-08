@@ -30,7 +30,11 @@ export interface DerivedStats {
   ramCapacityMb: number;
   ramUsedMb: number;
   energyRegenPerSec: number;
-  /** Energy drain per second while every daemon is actively working (base rate). */
+  /**
+   * Energy drain per second while the daemons are working. Scales with daemon
+   * throughput, not just daemon count (TDD §4.3: energy is consumed in
+   * proportion to compute utilization), so buying throughput buys a power bill.
+   */
   energyDrainPerSec: number;
   /** Scheduler slots available for deployed processes (M4, TDD §5.3). */
   schedulerSlots: number;
@@ -38,6 +42,10 @@ export interface DerivedStats {
   maxOpsPerActivation: number;
   /** Largest `range(n)` the parser accepts (M5, GDD tier 6). */
   iterationLimit: number;
+  /** Waiting-request queue depth (M6/OP-3: raised by REQUEST BUFFER EXPANSION). */
+  queueCapacity: number;
+  /** Energy reserve capacity (M6: raised by ENERGY BUFFER CELL). */
+  energyCapacity: number;
 }
 
 export function computeDerived(
@@ -54,6 +62,8 @@ export function computeDerived(
   let slotAdd = 0;
   let opBudgetAdd = 0;
   let iterationMult = 1;
+  let queueCapAdd = 0;
+  let energyCapAdd = 0;
 
   for (const def of UPGRADES) {
     const owned = upgrades[def.id] ?? 0;
@@ -88,6 +98,12 @@ export function computeDerived(
       case 'iterationLimitMult':
         iterationMult *= Math.pow(effect.factor, owned);
         break;
+      case 'queueCapacityAdd':
+        queueCapAdd += effect.jobs * owned;
+        break;
+      case 'energyCapacityAdd':
+        energyCapAdd += effect.units * owned;
+        break;
     }
   }
 
@@ -100,9 +116,11 @@ export function computeDerived(
     ramCapacityMb: BALANCE.resources.ramCapacityMb + ramCapAdd,
     ramUsedMb: ramUsed,
     energyRegenPerSec: BALANCE.resources.energyRegenPerSec + regenAdd,
-    energyDrainPerSec: workerCount * w.energyPerWorkerPerSec,
+    energyDrainPerSec: workerCount * w.energyPerWorkerPerSec * workerRateMult,
     schedulerSlots: BALANCE.scheduler.baseSlots + slotAdd,
     maxOpsPerActivation: BALANCE.ccl.maxOpsPerActivation + opBudgetAdd,
     iterationLimit: Math.round(BALANCE.ccl.iterationLimitBase * iterationMult),
+    queueCapacity: BALANCE.jobs.queueCapacity + queueCapAdd,
+    energyCapacity: BALANCE.resources.energyCapacity + energyCapAdd,
   };
 }

@@ -29,6 +29,8 @@ function mockHost(overrides?: {
   stats?: Record<string, CclValue>;
   fuelLimit?: number;
   commands?: Record<string, (args: readonly CclValue[]) => CclCommandOutcome>;
+  /** Names the host knows but the player has not unlocked (M6 binding gates). */
+  locked?: Record<string, string>;
 }): MockHost {
   const stats = overrides?.stats ?? { 'stats.cash': 50, 'stats.jobs_waiting': 3 };
   const commands = overrides?.commands ?? {};
@@ -52,6 +54,7 @@ function mockHost(overrides?: {
       return commands[name]?.(args);
     },
     commandNames: () => ['print', ...Object.keys(commands)],
+    lockedBinding: (name) => overrides?.locked?.[name] ?? null,
   };
   return host;
 }
@@ -300,6 +303,79 @@ describe('runStatements + evalCondition (scheduled processes)', () => {
     const result = runProgram(program!, host, 1000);
     expect(result.commandCalls).toBe(3);
     expect(result.commandFailures).toBe(2);
+  });
+});
+
+describe('namespaced calls (M6)', () => {
+  const marketHost = () =>
+    mockHost({
+      stats: { 'stats.cash': 50 },
+      commands: {
+        'market.price': (args) => ({ kind: 'ok', value: args[0] === 'compute' ? 0.4 : 0.2 }),
+        'market.average': () => ({ kind: 'ok', value: 0.5 }),
+      },
+    });
+
+  it('resolves a dotted callee through the command table', () => {
+    const host = marketHost();
+    const result = run('print(market.price("compute"))', host);
+    expect(result.status).toBe('ok');
+    expect(host.printed).toEqual([0.4]);
+    expect(result.commandCalls).toBe(2); // the market read and the print
+  });
+
+  it('composes into ordinary expressions and conditions', () => {
+    const host = marketHost();
+    const { program } = parse(
+      'p = market.price("compute")\nif p < market.average("compute", 30) * 0.9 {\n  print("low")\n}',
+      ALL,
+    );
+    const result = runProgram(program!, host, 1000);
+    expect(result.status).toBe('ok');
+    expect(host.printed).toEqual(['low']);
+  });
+
+  it('reports an unknown namespaced call, suggesting a near miss', () => {
+    const host = marketHost();
+    const { program } = parse('print(market.prise("compute"))', ALL);
+    const result = runProgram(program!, host, 1000);
+    expect(result.status).toBe('error');
+    expect(result.error?.message).toContain("Did you mean 'market.price'");
+  });
+
+  it('still says a readable value is not callable', () => {
+    const host = marketHost();
+    const { program } = parse('print(stats.cash())', ALL);
+    const result = runProgram(program!, host, 1000);
+    expect(result.status).toBe('error');
+    expect(result.error?.message).toContain('not a command you can call');
+  });
+
+  it('treats a bare namespace as a data channel, naming one of its members', () => {
+    const host = marketHost();
+    const { program } = parse('print(market)', ALL);
+    const result = runProgram(program!, host, 1000);
+    expect(result.status).toBe('error');
+    expect(result.error?.message).toContain('data channel');
+    expect(result.error?.message).toContain('market.price');
+  });
+
+  it('explains a locked binding rather than treating it as a typo', () => {
+    const host = mockHost({ locked: { 'market.price': "'market.price' is not available yet." } });
+    const { program } = parse('print(market.price("compute"))', ALL);
+    const result = runProgram(program!, host, 1000);
+    expect(result.status).toBe('error');
+    expect(result.error?.message).toBe("'market.price' is not available yet.");
+  });
+
+  it('explains a locked read the same way', () => {
+    const host = mockHost({
+      locked: { 'stats.compute_capacity': "'stats.compute_capacity' is not available yet." },
+    });
+    const { program } = parse('print(stats.compute_capacity)', ALL);
+    const result = runProgram(program!, host, 1000);
+    expect(result.status).toBe('error');
+    expect(result.error?.message).toContain('not available yet');
   });
 });
 

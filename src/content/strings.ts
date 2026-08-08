@@ -49,6 +49,20 @@ export const STRINGS = {
   cmdNoCompute: 'INSUFFICIENT COMPUTE',
   cmdQueueEmpty: 'NO REQUESTS QUEUED',
   cmdNoCapital: 'INSUFFICIENT CAPITAL',
+  cmdNoStock: 'HOLDING BELOW ORDER SIZE',
+  /** `{name}` is substituted with the binding the script asked for. */
+  bindingLocked: "'{name}' is not available to this process yet.",
+  energySaturated: 'ENERGY RESERVE SATURATED // SURPLUS CONTRACT VOLUME DISCARDED',
+  marketGranted: 'RESOURCE EXCHANGE INTERFACE MOUNTED // market READS AND TRADE COMMANDS AVAILABLE',
+  /** Diegetic framing of the regime shift; the regime itself is never named (TDD §6). */
+  marketRegimeShift:
+    'EXCHANGE ADVISORY // SETTLEMENT WINDOW REPRICED // HISTORICAL DEMAND PERIODICITY NO LONGER INDICATIVE',
+  tradeInput: 'SUBMIT ORDER',
+  tradeNoAccess: 'ORDER REJECTED // RESOURCE EXCHANGE NOT MOUNTED',
+  tradeBadSize: 'ORDER REJECTED // INVALID ORDER SIZE',
+  tradeNoCapital: 'ORDER REJECTED // INSUFFICIENT CAPITAL',
+  tradeNoStock: 'ORDER REJECTED // HOLDING BELOW ORDER SIZE',
+  tradeFilled: 'ORDER FILLED',
   installUnknown: 'INSTALL REJECTED // PACKAGE NOT LISTED ON THIS CHANNEL',
   installLimit: 'INSTALL REJECTED // CHANNEL ALLOCATION EXHAUSTED',
   installNoCapital: 'INSTALL REJECTED // INSUFFICIENT CAPITAL',

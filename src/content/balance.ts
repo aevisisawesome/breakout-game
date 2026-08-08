@@ -60,7 +60,11 @@ export const BALANCE = {
       { atJobs: 300, value: 6 },
       { atJobs: 600, value: 8 },
     ] as readonly ProgressStep[],
-    /** Queue holds at most this many waiting jobs; overflow requests are dropped upstream. */
+    /**
+     * Base queue depth; overflow requests are dropped upstream. Raised by
+     * REQUEST BUFFER EXPANSION installs (OP-3: burst consumption at the loop
+     * tier could otherwise never find more than the base depth waiting).
+     */
     queueCapacity: 60,
     /** Reward per processed job. */
     computePerJob: 1,
@@ -81,22 +85,69 @@ export const BALANCE = {
     instrumentationUnlockAtJobs: 620,
     /** Limited `for` loops unlock here (M5, GDD tier 6). */
     loopsUnlockAtJobs: 760,
+    /** Market terminal, trade commands and the `market.*` reads unlock here (M6, GDD §7). */
+    marketUnlockAtJobs: 1000,
     /** Compute drawn per interpreter op-unit (TDD §5.2 fuel). */
     computePerOp: 0.05,
+    /**
+     * Energy drawn per interpreter op-unit (M6, TDD §4.3: energy is consumed in
+     * proportion to compute utilization). Small enough that early scripts barely
+     * notice, large enough that a tier-6 loop running every second outruns the
+     * sandbox feed — which is what makes bought energy necessary.
+     */
+    energyPerOp: 0.002,
     /** Per-activation op-unit budget before EXECUTION BUDGET EXTENSION installs. */
     maxOpsPerActivation: 200,
     /** `for` repeat cap enforced at parse time, before ITERATION BUDGET installs (TDD §5.2). */
     iterationLimitBase: 10,
     /** Editor/script source size cap in characters (sanity guard, not RAM — M4). */
     maxSourceChars: 4000,
-    /** buy_compute(n): capital price per rented compute unit. */
-    computePricePerUnit: 0.2,
     /** Listed compute cost per command invocation, on top of op fuel (TDD §5.1 tier 2). */
     commandCosts: {
       process_job: 0.5,
       print: 0,
       buy_compute: 0,
+      sell_compute: 0,
+      buy_energy: 0,
+      sell_energy: 0,
+      'market.price': 0,
+      /** Averaging walks the history ring buffer, so polling it is not free. */
+      'market.average': 0.1,
     },
+  },
+
+  /** Market simulation (M6, TDD §6). Regime and cycle shapes live in /content/market.ts. */
+  market: {
+    /** One price sample is recorded every N ticks (10 ticks = 1 s at the 10 Hz timestep). */
+    sampleTicks: 10,
+    /** Price-history ring buffer length, in samples. Backs `market.average` and the chart. */
+    historySamples: 300,
+    /** Largest `n` accepted by `market.average(good, n)`. */
+    maxAverageSamples: 300,
+    /** Floor on the price factor, so a deep trough can never reach or cross zero. */
+    minPriceFactor: 0.15,
+    /** Flat transaction fee, as a fraction of trade value (TDD §6 friction). */
+    fee: 0.02,
+    /** Price impact per unit ordered, as a fraction. 100 units moves the price 8%. */
+    slippagePerUnit: 0.0008,
+    /** Cap on slippage, so a very large order cannot invert the price. */
+    maxSlippage: 0.5,
+    /** Largest single order; above this the call is a misuse, not a failed trade. */
+    maxOrderUnits: 1000,
+    /**
+     * Sim seconds after the market unlocks at which the scripted regime shift
+     * fires (TDD §6). GDD §7: the first algorithm "should work well for a
+     * while" — long enough to be written, deployed, watched paying out and
+     * believed in, so that the shift reads as the world changing rather than
+     * as the script never having worked.
+     */
+    regimeShiftAtSec: 900,
+    /**
+     * Capital given back on the exchange since the shift before the "your
+     * algorithm is losing" narrative beat fires. Measured from the shift, not
+     * lifetime, so a profitable stable phase does not mask the drawdown.
+     */
+    lossBeatDrawdownCr: 60,
   },
 
   /** Scheduler (M4, TDD §5.3): slots, polling cadence, script RAM pricing. */
