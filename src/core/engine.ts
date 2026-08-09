@@ -29,6 +29,7 @@ import {
   quoteSell,
   stepMarket,
 } from './market.ts';
+import { activeDirective } from './onboarding.ts';
 import { createPrng } from './prng.ts';
 import * as registry from './registry.ts';
 import { intervalTicks, intervalsAllowed, newProcessRuntime, scriptRamMb } from './scheduler.ts';
@@ -999,8 +1000,15 @@ export function createGameEngine(seed: number): GameEngine {
     if (program.processes.length > 0) {
       terminal('system', STRINGS.runIgnoresProcesses);
     }
+    // Running a process is the last directive in the onboarding set (GDD §34).
+    // Announce the set closing rather than letting the panel vanish unexplained
+    // — but only on the transition, so later RUNs say nothing.
+    const directiveBefore = activeDirective(run);
     pendingProgram = program;
     run.ccl.runCount += 1;
+    if (directiveBefore !== null && activeDirective(run) === null) {
+      terminal('system', STRINGS.directiveSetClosed);
+    }
     return { ok: true };
   }
 
@@ -1488,6 +1496,7 @@ export function createGameEngine(seed: number): GameEngine {
           };
         }),
         terminal: [...run.terminal],
+        directive: activeDirective(run),
       };
       return snapshotCache;
     },

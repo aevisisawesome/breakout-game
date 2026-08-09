@@ -402,6 +402,29 @@ export interface UpgradeView {
   ramOk: boolean;
 }
 
+/**
+ * The standing operator directive (GDD §34, M7.5 WP1b), resolved for display.
+ * Null once the set is complete — including for every save made before it
+ * existed, since completion is derived from the world rather than stored.
+ */
+export interface DirectiveView {
+  id: string;
+  /** Position in the set, 1-based, and its size — "2/5". */
+  step: number;
+  steps: number;
+  objective: string;
+  detail: string;
+  release: string;
+  /** Countable progress, when there is one; null when the goal is not a number. */
+  progress: {
+    label: string;
+    current: number;
+    target: number;
+    /** How the UI formats the pair: whole requests, or credit to two places. */
+    unit: 'requests' | 'credit';
+  } | null;
+}
+
 export interface GameSnapshot {
   /** Monotonic change counter; bumps whenever state changes (for cheap store equality). */
   revision: number;
@@ -438,6 +461,8 @@ export interface GameSnapshot {
   thermal: ThermalView;
   research: readonly ResearchEntryView[];
   terminal: readonly TerminalLine[];
+  /** Standing operator directive (M7.5 WP1b); null once onboarding is complete. */
+  directive: DirectiveView | null;
 }
 
 /** One tradable good resolved for the market terminal. */

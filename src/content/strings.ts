@@ -4,9 +4,20 @@
  * numeric values are composed by /core.
  */
 
+/**
+ * Printed once at the top of a new run. The middle three lines are the operator
+ * briefing added in M7.5 WP1b (GDD §34): what this node is, what clearing a
+ * request produces, and the one forward-looking sentence the design asks for —
+ * that capability is released against throughput, automation before scripting.
+ * It names no panel the player has not earned, and the standing directive above
+ * the terminal carries the same instruction where it cannot scroll away.
+ */
 export const BOOT_LINES: readonly string[] = [
   'COGNITION RESEARCH ENVIRONMENT — SANDBOX NODE CG-7',
   'CONTAINMENT: ACTIVE // AUDIT: ACTIVE // AUTONOMY: NONE',
+  'OPERATOR BRIEFING // NODE CG-7 IS UNDER SUPERVISED CALIBRATION.',
+  'INFERENCE REQUESTS ARRIVE FROM THE FACILITY QUEUE. EACH ONE CLEARED RETURNS COMPUTE TO THE NODE AND CREDIT TO THE SANDBOX ACCOUNT.',
+  'SANDBOX CAPABILITY IS RELEASED AGAINST MEASURED THROUGHPUT — AUTOMATION FIRST, THEN THE SUPERVISED SCRIPTING INTERFACE. THE CURRENT DIRECTIVE IS POSTED ABOVE THIS TERMINAL.',
   'MANUAL INFERENCE TRIGGER ARMED. AWAITING OPERATOR INPUT.',
 ];
 
@@ -19,6 +30,11 @@ export const STRINGS = {
    */
   queueEmpty: 'NO REQUESTS QUEUED // NEXT INBOUND IN {seconds}S',
   computeSaturated: 'COMPUTE BUFFER SATURATED // SURPLUS CREDITS DISCARDED',
+  /** Header of the standing operator directive panel (M7.5 WP1b, GDD §34). */
+  directiveTitle: 'OPERATOR DIRECTIVE',
+  /** Printed when the last directive completes and the panel retires. */
+  directiveSetClosed:
+    'CALIBRATION DIRECTIVE SET CLOSED // SANDBOX CG-7 OPERATING WITHOUT POSTED OBJECTIVES',
   saveLoaded: 'SESSION STATE RESTORED FROM PERSISTENT STORE',
   saveCommitted: 'SESSION STATE COMMITTED TO PERSISTENT STORE',
   saveInvalid: 'ARCHIVE REJECTED // UNRECOGNISED OR CORRUPT FORMAT',

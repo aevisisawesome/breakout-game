@@ -2,6 +2,7 @@ import { useEffect } from 'react';
 
 import { AUTOSAVE_INTERVAL_MS, persistSave, startGameLoop } from './game.ts';
 import { engine, useGameStore } from './session.ts';
+import { DirectivePanel } from './components/DirectivePanel.tsx';
 import { EditorPanel } from './components/EditorPanel.tsx';
 import { ExecutePanel } from './components/ExecutePanel.tsx';
 import { ExecutionLog } from './components/ExecutionLog.tsx';
@@ -17,6 +18,10 @@ import { UpgradePanel } from './components/UpgradePanel.tsx';
 
 export function App() {
   const sync = useGameStore((s) => s.sync);
+  // While an onboarding directive is posted, the narrow layout hoists the
+  // trigger above the terminal so the control the directive names is on the
+  // first screen rather than a scroll below it (M7.5 WP1b).
+  const directivePosted = useGameStore((s) => s.snapshot.directive !== null);
 
   // Drive the sim from rAF; mirror snapshots into the store each frame (TDD §4.1, §9).
   useEffect(() => startGameLoop(engine, () => sync(engine)), [sync]);
@@ -46,7 +51,10 @@ export function App() {
         <span>CONTAINMENT: ACTIVE // AUDIT: ACTIVE</span>
       </header>
       <div className="screen-layout">
-        <section className="terminal-column">
+        <section
+          className={directivePosted ? 'terminal-column directive-posted' : 'terminal-column'}
+        >
+          <DirectivePanel />
           <TerminalPanel />
           <ExecutePanel />
           <EditorPanel />
