@@ -1,7 +1,13 @@
 import { useState } from 'react';
 
 import { TEMPLATES, type TemplateDef } from '../../content/templates.ts';
-import { clampParam, renderTemplate, templateDefaults } from '../../core/templates.ts';
+import {
+  clampParam,
+  paramMax,
+  renderTemplate,
+  templateDefaults,
+  type TemplateLimits,
+} from '../../core/templates.ts';
 import { useGameStore } from '../session.ts';
 
 /**
@@ -11,6 +17,11 @@ import { useGameStore } from '../session.ts';
  */
 export function TemplateLibrary({ onInsert }: { onInsert: (source: string) => void }) {
   const constructs = useGameStore((s) => s.snapshot.ccl.constructs);
+  // A parameter whose ceiling is a live derived stat tracks it here, so buying
+  // ITERATION BUDGET EXTENSION raises what the form will let the player ask for
+  // instead of leaving them to hand-edit the generated code (OP-4).
+  const iterationLimit = useGameStore((s) => s.snapshot.ccl.iterationLimit);
+  const limits: TemplateLimits = { iterationLimit };
   const [open, setOpen] = useState(false);
   const [selectedId, setSelectedId] = useState(TEMPLATES[0]?.id ?? '');
   const [values, setValues] = useState<Record<string, Record<string, number>>>({});
@@ -31,7 +42,7 @@ export function TemplateLibrary({ onInsert }: { onInsert: (source: string) => vo
     });
   };
 
-  const preview = renderTemplate(selected, current);
+  const preview = renderTemplate(selected, current, limits);
 
   return (
     <div className="template-library">
@@ -56,18 +67,23 @@ export function TemplateLibrary({ onInsert }: { onInsert: (source: string) => vo
           <div className="template-params">
             {selected.params.map((param) => (
               <label key={param.id} className="template-param">
-                <span className="terminal-dim">{param.label}</span>
+                <span className="terminal-dim">
+                  {param.label}
+                  {/* A derived ceiling is worth stating: it moves when the player
+                      installs the extension that raises it (OP-4). */}
+                  {param.maxFrom !== undefined && ` — MAX ${paramMax(param, limits)}`}
+                </span>
                 <input
                   type="number"
                   value={current[param.id] ?? param.default}
                   min={param.min}
-                  max={param.max}
+                  max={paramMax(param, limits)}
                   step={param.step}
                   onChange={(e) => setValue(param.id, e.target.value)}
                   onBlur={() =>
                     setValue(
                       param.id,
-                      String(clampParam(param, current[param.id] ?? param.default)),
+                      String(clampParam(param, current[param.id] ?? param.default, limits)),
                     )
                   }
                 />

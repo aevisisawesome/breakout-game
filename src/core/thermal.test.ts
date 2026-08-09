@@ -16,7 +16,7 @@ import { STRINGS } from '../content/strings.ts';
 import { TEMPLATES } from '../content/templates.ts';
 import { createGameEngine, newMetaState, newRunState, TICKS_PER_SEC } from './engine.ts';
 import { computeDerived } from './derived.ts';
-import { renderTemplate, templateDefaults } from './templates.ts';
+import { renderTemplate, templateDefaults, type TemplateLimits } from './templates.ts';
 import {
   coolTemperature,
   demandWindowTicksRemaining,
@@ -32,6 +32,9 @@ import {
 import type { GameEngine, RunState } from './types.ts';
 
 const T = BALANCE.thermal;
+
+/** No iteration-budget installs, which is what a template's declared ceiling starts at. */
+const LIMITS: TemplateLimits = { iterationLimit: BALANCE.ccl.iterationLimitBase };
 
 /** Engine loaded from a crafted run state (current save shape). */
 function engineWith(setup: (run: RunState) => void, seed = 42): GameEngine {
@@ -422,7 +425,7 @@ describe('engine: heat controls', () => {
 
   it('ships a template that generates the latched controller', () => {
     const def = TEMPLATES.find((t) => t.id === 'thermal-governor')!;
-    const source = renderTemplate(def, templateDefaults(def));
+    const source = renderTemplate(def, templateDefaults(def), LIMITS);
     expect(source).toContain('every');
     expect(source).toContain('boost_cooling()');
     expect(source).toContain('reduce_clock_speed()');
@@ -442,8 +445,16 @@ describe('engine: the challenge end to end', () => {
    * controller is only usable alongside a supply of energy — which is what M6
    * put in the player's hands. Every sandbox here runs one, so the comparisons
    * below are about heat control rather than about who ran out of power first.
+   *
+   * This used to be hand-written CCL, because no template could produce it —
+   * which meant M7's answer to its own challenge was unreachable for a player
+   * who does not type code (OP-20). It is now generated from RESERVE TOP-UP at
+   * values the form itself offers, so the whole of this section is template mode.
    */
-  const TOPUP = 'every 2 seconds {\n  if stats.energy < 400 {\n    buy_energy(100)\n  }\n}\n';
+  const TOPUP = ((): string => {
+    const def = TEMPLATES.find((t) => t.id === 'energy-topup')!;
+    return renderTemplate(def, { interval: 2, floor: 400, reserve: 100, units: 100 }, LIMITS);
+  })();
 
   /** A fully built-out sandbox at the moment the thermal tier is granted. */
   function readySandbox(deployed?: string): GameEngine {
@@ -474,7 +485,7 @@ describe('engine: the challenge end to end', () => {
 
   const governorSource = (): string => {
     const def = TEMPLATES.find((t) => t.id === 'thermal-governor')!;
-    return renderTemplate(def, templateDefaults(def));
+    return renderTemplate(def, templateDefaults(def), LIMITS);
   };
 
   it('announces the window, cooks an uncontrolled sandbox, and clears afterwards', () => {

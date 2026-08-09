@@ -29,7 +29,7 @@ import {
   stepMarket,
 } from './market.ts';
 import { createPrng } from './prng.ts';
-import { renderTemplate, templateDefaults } from './templates.ts';
+import { renderTemplate, templateDefaults, type TemplateLimits } from './templates.ts';
 import type { GameEngine, RunState } from './types.ts';
 
 /**
@@ -445,13 +445,14 @@ describe('OP-3: the request buffer can be raised', () => {
 // The acceptance criterion (GDD §7, Implementation Plan M6).
 
 describe('the reference algorithm works, then stops working', () => {
+  const limits: TemplateLimits = { iterationLimit: BALANCE.ccl.iterationLimitBase };
   const spreadTrader = (): string => {
     const def = TEMPLATES.find((t) => t.id === 'market-trader')!;
-    return renderTemplate(def, templateDefaults(def));
+    return renderTemplate(def, templateDefaults(def), limits);
   };
   const trendTrader = (): string => {
     const def = TEMPLATES.find((t) => t.id === 'market-trend')!;
-    return renderTemplate(def, templateDefaults(def));
+    return renderTemplate(def, templateDefaults(def), limits);
   };
 
   /** Deploy `source`, let the market settle, then measure trading cash flow. */
