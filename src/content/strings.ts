@@ -12,7 +12,12 @@ export const BOOT_LINES: readonly string[] = [
 
 export const STRINGS = {
   executeInput: 'EXECUTE INFERENCE',
-  queueEmpty: 'NO REQUESTS QUEUED // INFERENCE TRIGGER IDLE',
+  /**
+   * Trigger pressed with an empty queue. Not a fault — the node is ahead of its
+   * inbound rate — so it says when the next request lands rather than only that
+   * there is none (M7.5 WP1a, OP-15). `{seconds}` is composed by /core.
+   */
+  queueEmpty: 'NO REQUESTS QUEUED // NEXT INBOUND IN {seconds}S',
   computeSaturated: 'COMPUTE BUFFER SATURATED // SURPLUS CREDITS DISCARDED',
   saveLoaded: 'SESSION STATE RESTORED FROM PERSISTENT STORE',
   saveCommitted: 'SESSION STATE COMMITTED TO PERSISTENT STORE',

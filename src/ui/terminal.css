@@ -188,7 +188,22 @@ button:hover {
 .execute-panel > .panel-body {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 1.2rem;
+}
+
+/* Inbound request traffic (WP1a/OP-16): the opening screen's one live element.
+   It fills towards the next arriving request, so an idle node still moves. */
+.inbound-meter {
+  flex: 1 1 160px;
+  min-width: 130px;
+  max-width: 240px;
+  margin-bottom: 0;
+  color: var(--term-dim);
+}
+
+.inbound-fill {
+  background: var(--term-fg);
 }
 
 .execute-button {

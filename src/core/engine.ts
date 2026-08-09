@@ -116,7 +116,14 @@ export function newRunState(seed: number): RunState {
       energy: pool(r.energyIdle, r.energyCapacity),
       temperature: pool(BALANCE.thermal.ambientC, Infinity),
     },
-    jobs: { waiting: 0, arrivalAccumulator: 0, lifetimeProcessed: 0, lifetimeClicks: 0 },
+    jobs: {
+      // A run opens with requests already waiting, so the very first press of
+      // the trigger has work to do (M7.5 WP1a, OP-15).
+      waiting: BALANCE.jobs.initialQueued,
+      arrivalAccumulator: 0,
+      lifetimeProcessed: 0,
+      lifetimeClicks: 0,
+    },
     upgrades: {},
     workers: { processAccumulator: 0, overclockRemainingSec: 0 },
     ccl: {
@@ -357,6 +364,17 @@ export function createGameEngine(seed: number): GameEngine {
         run.jobs.waiting += 1;
       }
     }
+  }
+
+  /**
+   * Seconds until the next request lands, from the fractional arrival
+   * accumulator (M7.5 WP1a). Drives both the inbound indicator and the wording
+   * of an empty-queue press, so the readout and the terminal cannot disagree.
+   */
+  function secondsToNextArrival(derived: DerivedStats, env: ThermalEnv): number {
+    const perSec = derived.arrivalPerSec * env.arrivalMult;
+    if (perSec <= 0) return Infinity;
+    return (1 - run.jobs.arrivalAccumulator) / perSec;
   }
 
   /** RAM occupied by deployed scripts (TDD §4.3), on top of install footprints. */
@@ -848,8 +866,16 @@ export function createGameEngine(seed: number): GameEngine {
     }
 
     if (run.jobs.waiting < 1) {
-      terminal('error', STRINGS.queueEmpty);
-      return { ok: false, reason: STRINGS.queueEmpty };
+      // Not a fault: the trigger is simply ahead of the inbound rate. Say when
+      // the next request lands, and say it in the system voice rather than the
+      // fault voice (M7.5 WP1a, OP-15).
+      const waitSec = secondsToNextArrival(derived, currentThermalEnv(derived));
+      const text = STRINGS.queueEmpty.replace(
+        '{seconds}',
+        Number.isFinite(waitSec) ? waitSec.toFixed(1) : '--',
+      );
+      terminal('system', text);
+      return { ok: false, reason: text };
     }
 
     const processed = Math.min(derived.batchPerClick, run.jobs.waiting);
@@ -1268,6 +1294,7 @@ export function createGameEngine(seed: number): GameEngine {
     getSnapshot(): Readonly<GameSnapshot> {
       if (snapshotCache) return snapshotCache;
       const derived = computeDerived(run.upgrades, run.jobs.lifetimeProcessed);
+      const snapshotEnv = currentThermalEnv(derived);
       const capital = run.resources.capital.current;
       // Only upgrades the sim has revealed appear — the UI never evaluates content gates.
       const upgradeViews: UpgradeView[] = UPGRADES.filter(
@@ -1398,7 +1425,11 @@ export function createGameEngine(seed: number): GameEngine {
           waiting: run.jobs.waiting,
           queueCapacity: derived.queueCapacity,
           batchPerClick: derived.batchPerClick,
-          arrivalPerSec: derived.arrivalPerSec,
+          // The *effective* rate, demand window included, so the inbound
+          // readout and the countdown beside it cannot disagree (M7.5 WP1a).
+          arrivalPerSec: derived.arrivalPerSec * snapshotEnv.arrivalMult,
+          arrivalProgress: Math.max(0, Math.min(1, run.jobs.arrivalAccumulator)),
+          secondsToNextArrival: secondsToNextArrival(derived, snapshotEnv),
           lifetimeProcessed: run.jobs.lifetimeProcessed,
         },
         workers: {

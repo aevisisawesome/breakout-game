@@ -100,6 +100,14 @@ export const BALANCE = {
   },
 
   jobs: {
+    /**
+     * Requests already waiting when a run starts (M7.5 WP1a, OP-15). The queue
+     * used to start empty and fill at `arrivalPerSec[0]`, so a player who
+     * pressed the trigger inside the first second got an error as their first
+     * feedback. Enough that the opening batch always has work; small enough
+     * that the arrival rate is still what the early game is limited by.
+     */
+    initialQueued: 3,
     /** Inference requests entering the queue, per second, stepped by lifetime jobs processed. */
     arrivalPerSec: [
       { atJobs: 0, value: 0.9 },

@@ -413,7 +413,12 @@ export interface GameSnapshot {
     waiting: number;
     queueCapacity: number;
     batchPerClick: number;
+    /** Inbound request rate, including any open demand window (M7.5 WP1a). */
     arrivalPerSec: number;
+    /** Progress towards the next request, 0..1 — the fractional arrival accumulator. */
+    arrivalProgress: number;
+    /** Seconds until the next request lands, at the current rate. */
+    secondsToNextArrival: number;
     lifetimeProcessed: number;
   };
   workers: {

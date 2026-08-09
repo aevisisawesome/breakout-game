@@ -16,6 +16,7 @@ export function ExecutePanel() {
       >
         EXECUTE
       </button>
+      <InboundMeter />
       <div className="execute-readout">
         <span>
           QUEUE {jobs.waiting}/{jobs.queueCapacity}
@@ -36,5 +37,39 @@ export function ExecutePanel() {
         </div>
       )}
     </Panel>
+  );
+}
+
+/**
+ * Inbound request traffic (M7.5 WP1a, OP-16). The one live element on the
+ * opening screen: the bar fills towards the next arriving request and empties
+ * as it lands, roughly once a second at the starting rate. It is real state —
+ * the sim's fractional arrival accumulator — not decoration, and it answers the
+ * question an empty queue raises, which is "how long until there is work".
+ */
+function InboundMeter() {
+  const jobs = useGameStore((s) => s.snapshot.jobs);
+  // A full queue still takes traffic — it is dropped upstream — so say that
+  // rather than counting down to an arrival the player will never see.
+  const full = jobs.waiting >= jobs.queueCapacity;
+  const next = Number.isFinite(jobs.secondsToNextArrival)
+    ? `${jobs.secondsToNextArrival.toFixed(1)}S`
+    : '--';
+
+  return (
+    <div className="meter inbound-meter">
+      <div className="meter-label">
+        <span>INBOUND</span>
+        <span>
+          {jobs.arrivalPerSec.toFixed(1)}/S {full ? '— QUEUE FULL' : `— NEXT ${next}`}
+        </span>
+      </div>
+      <div className="meter-track">
+        <div
+          className="meter-fill inbound-fill"
+          style={{ width: `${jobs.arrivalProgress * 100}%` }}
+        />
+      </div>
+    </div>
   );
 }

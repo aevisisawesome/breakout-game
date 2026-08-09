@@ -1,6 +1,6 @@
 # BREAK//OUT — Game Design Document
 
-> **Status:** Living document — v1.2, created 2026-08-06, last amended 2026-08-09 (see the Amendment Log).
+> **Status:** Living document — v1.4, created 2026-08-06, last amended 2026-08-09 (see the Amendment Log).
 > **Maintenance requirement:** This document records the original purpose and full design of the game. It **must be kept up-to-date** as the project evolves. Any change to scope, mechanics, tone or platform must be recorded here (see the Amendment Log at the end). Do not let the implementation drift away from this document silently — either the code or this document must change until they agree.
 
 ## High concept
@@ -1511,6 +1511,8 @@ Players write CCL directly.
 All three should generate the same underlying script.
 A player can begin with templates, inspect the generated code, modify it and gradually learn programming.
 The game should never require prior coding knowledge, but coding knowledge should allow more elegant and effective solutions.
+
+**Template coverage must be closed under what the game asks of the player.** A player who never writes code must be able to reach every action the campaign requires them to take — which means that where a resource can be bought it can also be sold, and where a challenge has a designed solution that solution must be expressible in templates alone. Coverage gaps are not a smaller version of the mode; they are a wall, and they fall exactly on the players this section exists for. (Recorded because the prototype shipped a buy template with no sell counterpart, leaving the thermal challenge unsolvable without code — Implementation Plan OP-20.)
 ---
 
 # 26. Challenge scenarios
@@ -1765,6 +1767,66 @@ The following decisions have been confirmed by the project owner and supersede t
 
 ---
 
+# 34. First contact and onboarding
+
+Added 2026-08-09. The game had no onboarding design at all, and the first playtester
+reported not knowing what they were supposed to do (Implementation Plan OP-15). This
+section states what onboarding must achieve and the constraints it works under; the
+design itself is written and implemented in M7.5 WP1b. (M7.5 WP1a runs first and covers
+only what is true whatever the briefing says — the dead-feeling opening screen and the
+error-as-first-feedback fault below.)
+
+## The problem
+
+Pillar 2.5's diegetic progressive reveal is a strength later and an empty room at the
+start. The opening state is three lines of boot flavour, one button and one meter; the
+only instruction addresses an operator without saying what the trigger achieves or what
+the player is working toward. Everything else is concealed by design until job counts
+unlock it, and the script editor — the thing the game is actually about — does not appear
+for 200 processed requests. A player who disengages before then never sees the game.
+
+## What onboarding must achieve
+
+1. **A stated first action.** The player knows what to press and what pressing it does.
+2. **A stated near goal.** Not the campaign — the next thing that will happen, so the
+   first minutes have a direction rather than a texture.
+3. **A promise of the game underneath.** The player should know that automation and
+   programming are coming, before the 200-request wall, or they are being asked to
+   commit to a clicker on the strength of a clicker.
+4. **No dead first impression.** A click in the first second currently returns
+   `NO REQUESTS QUEUED` because the queue has not filled — an error message as the
+   player's first feedback. Whatever else changes, that must not survive.
+   _Met 2026-08-09 by M7.5 WP1a: a run opens with requests already queued, and an
+   empty queue reports the wait until the next arrival in the system voice rather
+   than as a fault._
+
+## Constraints
+
+- **The voice is not negotiable** (§33.3). A modal "click here!" tutorial would wreck the
+  aesthetic the game is built on. The fiction already supplies the vehicle: the system
+  addresses an operator, and a system briefing its operator is in-voice.
+- **Progressive reveal stays.** Onboarding explains what is visible; it does not
+  pre-announce panels the player has not earned.
+- **It must work for a non-programmer**, who is the player §25 exists for and the tester
+  the prototype's exit question depends on.
+- **The opening screen must have something moving.** A screen with no motion and no
+  instruction reads as broken rather than as calm. _Settled 2026-08-09 by M7.5 WP1a
+  (OP-16): the trigger panel carries an inbound-traffic meter that fills towards the
+  next arriving request. The motion is real state, not decoration — the sim's own
+  arrival accumulator — and the pre-M7 cosmetic temperature flicker was deliberately
+  not restored, since that readout is not visible until the ten-job unlock and the
+  value it shows is now a physical model the player is later asked to control.
+  Whatever WP1b adds, it inherits a screen that already moves._
+
+## Open questions for M7.5 WP1b
+
+Whether the briefing is a scripted terminal sequence, a persisted objective line, or a
+system "advisory" that restates itself while unacknowledged; whether it is skippable and
+whether skipping is remembered across a fork; and how far it may look ahead without
+spoiling the reveals that make tiers 3–6 land.
+
+---
+
 # Amendment Log
 
 All design changes must be recorded here with date and rationale. Do not rewrite historical entries.
@@ -1777,4 +1839,7 @@ All design changes must be recorded here with date and rationale. Do not rewrite
 | 2026-08-08 | 1.1     | **Two tier-1 variables added:** `stats.compute_capacity` and `stats.energy_capacity`, revealed with the exchange.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    | §5 tier 1's variable list is open-ended. A player who can buy resources needs to be able to see the ceiling they are buying towards — without it, the "bought more than you can hold" failure is unavoidable rather than instructive, which inverts the lesson GDD §6 wants.                                                                                                                                                                                                                                                                                                                                                       |
 | 2026-08-09 | 1.2     | **§26 Thermal Runaway, prototype scope fixed.** §26 lists Thermal Runaway as an optional separate _scenario_. In the prototype it is instead an **in-run, recurring event**: a "priority demand window" that derates the facility's shared coolant loop and raises the inbound request rate, opening on a schedule from the thermal grant and repeating thereafter. It is announced in the system voice, unlike the market regime, which stays hidden.                                                                                                                                                                                                               | §26's brief ("maximize production without allowing hardware to overheat", teaching conditions, feedback control and scheduling) is exactly what the prototype needs, but as a one-shot scenario the player could never test a written response against it — they would be writing blind, and a script they cannot re-run is not automation. Recurrence is what makes "solve it with a small script" (the M7 acceptance criterion) a real proposition. Announcing it differs from the hidden market regime because the puzzle here is the _response_, not the detection, and because the fiction already supplies the announcement. |
 | 2026-08-09 | 1.2     | **Pillar 2.4 made concrete: heat is produced by inference work and by script execution.** Every processed request warms the core, whoever triggered it, and every interpreter op-unit warms it too. Above a soft threshold throughput degrades; above a hard threshold a watchdog halts the whole node, the manual trigger included.                                                                                                                                                                                                                                                                                                                                 | §2.4 says "a badly written loop can overwhelm the player's infrastructure" and §3 lists Cooling as a primary resource, but nothing in the design made a script _physically_ costly rather than merely slow. Charging heat per op is what makes the M5 wasteful loop have a consequence the player can feel, and halting the manual trigger during a shutdown is what stops the failure state being one the player can simply click through.                                                                                                                                                                                        |
+| 2026-08-09 | 1.3     | **§34 First contact and onboarding added**, and onboarding thereby enters prototype scope (§31, which lists mechanics but no first-contact design). The section states what onboarding must achieve and the constraints it works under — the voice of §33.3, the progressive reveal of pillar 2.5, and a non-programmer as the target reader — and leaves the design itself to Implementation Plan M7.5 WP1.                                                                                                                                                                                                                                                         | The GDD had no onboarding content of any kind, so the first playtest finding ("did not know what they were supposed to do", OP-15) had nothing to be implemented against, and any fix would have been invented at the keyboard against an aesthetic it could easily have broken. The prototype's exit question cannot be answered by players who leave before the script editor unlocks at 200 processed requests.                                                                                                                                                                                                                 |
+| 2026-08-09 | 1.3     | **§25 gains a coverage rule: template mode must be closed under the actions the campaign requires** — where a resource can be bought it can be sold, and a designed solution to a challenge must be expressible in templates alone.                                                                                                                                                                                                                                                                                                                                                                                                                                  | §25 described three modes and asserted that the game never requires coding knowledge, but nothing stated that the template set had to be _complete_. The prototype shipped a buy template with no sell counterpart, which made M7's thermal challenge unsolvable without hand-written code (OP-20) — an accessibility promise broken by omission rather than by design.                                                                                                                                                                                                                                                            |
 | 2026-08-09 | 1.2     | **One tier-1 variable added:** `stats.temperature_limit`, revealed with the thermal controls. Deliberately _not_ added: a read for whether the coolant is currently engaged.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         | Same reasoning as the two variables added on 2026-08-08: a player asked to hold a value below a ceiling must be able to read the ceiling, or the challenge is a memory test. A "is cooling on?" read was rejected because it would let a controller sidestep re-engagement trivially, deleting the §6 feedback-instability lesson the challenge exists to teach; the intended fixes (a better setpoint, a tighter polling interval) are both expressible with what the player already has.                                                                                                                                         |
+| 2026-08-09 | 1.4     | **A run starts with inference requests already queued, and the opening screen carries live inbound traffic.** §34’s fourth requirement ("no dead first impression") and its motion constraint are both now met rather than pending; the empty-queue response is restated as a system report of when the next request lands, not a fault.                                                                                                                                                                                                                                                                                                                             | Implementing §34’s own requirement, recorded because it changes the game’s opening state rather than only its presentation: the first press of the trigger now always processes work. Motion was supplied out of state the sim already keeps (the fractional arrival accumulator) instead of by restoring the pre-M7 cosmetic temperature flicker — that readout is gated behind the ten-job unlock, so it was never on the first screen, and the temperature is now a real model the thermal challenge asks the player to control, which noise would corrupt.                                                                     |
