@@ -56,9 +56,12 @@ export interface UnlockState {
   editor: boolean;
   /** Tier 3 (M4): `if`/`else` and the `and`/`or`/`not` operators parse. */
   conditions: boolean;
-  /** Tier 4 (M4): `every`/`when` parse, DEPLOY and the process monitor appear. */
+  /** Tier 4 (M4): `every`/`when` parse, DEPLOY and the process table appear. */
   scheduler: boolean;
-  /** M5: the execution log and profiler panels appear (GDD §6 debugging tools). */
+  /**
+   * M5: the execution log appears and the process table's rows gain their cost
+   * and diagnosis half (GDD §6 debugging tools).
+   */
   instrumentation: boolean;
   /** Tier 6 (M5): `for i in range(n)` parses, subject to the iteration limit. */
   loops: boolean;
@@ -144,7 +147,7 @@ export interface ProcessRuntime {
   abortsFault: number;
   lastStatus: CclRunStatus | null;
   lastRunTick: number | null;
-  /** Message and line of the most recent fault, for the monitor and profiler. */
+  /** Message and line of the most recent fault, for the process table. */
   lastError: string | null;
   lastErrorLine: number | null;
 }
@@ -578,8 +581,15 @@ export interface CclView {
   };
 }
 
-/** One scheduled process resolved for the process monitor. */
+/** One scheduled process resolved for the process table. */
 export interface ProcessView {
+  /**
+   * Join key into `TelemetryView.profile` (M7.5 WP4a). The process table shows
+   * live state and accumulated cost as one row, and the two halves come from
+   * different sub-trees of the snapshot; the key is exposed so the UI joins on a
+   * value the engine owns rather than re-deriving the convention.
+   */
+  profileKey: string;
   kind: 'every' | 'when';
   /** Source text of the declaration, e.g. "every 2 seconds". */
   label: string;
@@ -617,7 +627,7 @@ export interface DiagnosisView {
   suggestion: string;
 }
 
-/** One row of the profiler: a deployed process, or the manual RUN aggregate. */
+/** One row of accumulated cost: a deployed process, or the manual RUN aggregate. */
 export interface ProfileEntryView {
   /** Stable row key. */
   key: string;

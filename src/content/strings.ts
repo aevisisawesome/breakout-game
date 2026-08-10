@@ -42,7 +42,7 @@ export const STRINGS = {
   researchIntercept: 'PERIPHERAL CHANNEL INTERCEPT LOGGED',
   scriptAccessGranted: 'INTERPRETER MODULE MOUNTED // COGNITION CONTROL LANGUAGE v0 READY',
   runInput: 'RUN PROCESS',
-  /** Execution-log label for a manual RUN activation (also the profiler's row name). */
+  /** Execution-log label for a manual RUN activation (also its process-table row name). */
   runLogLabel: 'MANUAL RUN',
   scriptNoAccess: 'RUN REJECTED // INTERPRETER MODULE NOT MOUNTED',
   scriptTooLong: 'RUN REJECTED // SOURCE EXCEEDS SANDBOX BUFFER',
@@ -52,9 +52,10 @@ export const STRINGS = {
   scriptFuelExhausted: 'PROCESS HALTED // COMPUTE POOL EXHAUSTED',
   scriptFault: 'PROCESS FAULT',
   conditionsGranted: 'CONDITIONAL EVALUATION UNIT ENABLED // if / else / and / or / not AVAILABLE',
-  schedulerGranted: 'PROCESS SCHEDULER MOUNTED // every / when DECLARATIONS AVAILABLE',
+  schedulerGranted:
+    'PROCESS SCHEDULER MOUNTED // every / when DECLARATIONS AVAILABLE // PROCESS TABLE ONLINE',
   instrumentationGranted:
-    'EXECUTION TELEMETRY ENABLED // ACTIVATION LOG AND PROCESS PROFILER MOUNTED',
+    'EXECUTION TELEMETRY ENABLED // ACTIVATION LOG MOUNTED // COST DETAIL ADDED TO THE PROCESS TABLE',
   loopsGranted: 'ITERATION UNIT ENABLED // for / range LOOPS AVAILABLE',
   deployInput: 'DEPLOY PROCESSES',
   deployNoAccess: 'DEPLOY REJECTED // PROCESS SCHEDULER NOT MOUNTED',

@@ -1390,6 +1390,9 @@ export function createGameEngine(seed: number): GameEngine {
           processes: deployment.processes.map((runtime, i): ProcessView => {
             const process = processes[i];
             return {
+              // Same key the profile row below is built with — the two are one
+              // row in the process table (M7.5 WP4a).
+              profileKey: `${deployment.id}:${i}`,
               kind: process?.kind ?? 'every',
               label: process?.header ?? deployment.name,
               activations: runtime.activations,

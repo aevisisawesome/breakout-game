@@ -144,7 +144,7 @@ export const BALANCE = {
     /** Scheduled processes (`every`/`when`) + DEPLOY unlock here (M4, GDD tier 4). */
     schedulerUnlockAtJobs: 480,
     /**
-     * Execution log + profiler unlock here (M5, GDD §6). Deliberately ahead of
+     * Execution log + process-table cost detail unlock here (M5, GDD §6). Deliberately ahead of
      * loops: the tools to understand a wasteful loop must exist before loops do.
      */
     instrumentationUnlockAtJobs: 620,

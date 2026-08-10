@@ -7,8 +7,7 @@ import { EditorPanel } from './components/EditorPanel.tsx';
 import { ExecutePanel } from './components/ExecutePanel.tsx';
 import { ExecutionLog } from './components/ExecutionLog.tsx';
 import { MarketPanel } from './components/MarketPanel.tsx';
-import { ProcessMonitor } from './components/ProcessMonitor.tsx';
-import { ProfilerPanel } from './components/ProfilerPanel.tsx';
+import { ProcessTable } from './components/ProcessTable.tsx';
 import { ResearchFeed } from './components/ResearchFeed.tsx';
 import { ResourcePanel } from './components/ResourcePanel.tsx';
 import { SystemBar } from './components/SystemBar.tsx';
@@ -64,8 +63,7 @@ export function App() {
           <ResourcePanel />
           <ThermalPanel />
           <MarketPanel />
-          <ProcessMonitor />
-          <ProfilerPanel />
+          <ProcessTable />
           <UpgradePanel />
           <ResearchFeed />
         </aside>

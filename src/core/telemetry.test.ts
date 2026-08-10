@@ -311,6 +311,71 @@ describe('profiler', () => {
   });
 });
 
+/**
+ * M7.5 WP4a (OP-25): the scheduler view and the profile are rendered as one row
+ * per process, so the join between them has to be total and the two halves have
+ * to agree on the fields they both carry.
+ */
+describe('process table join', () => {
+  it('gives every deployed process exactly one profile row, and they agree', () => {
+    const engine = m5Engine((run) => {
+      run.upgrades['process-table'] = 2; // 3 slots, for a three-row table
+      run.resources.ram.capacity = 512;
+    });
+    engine.dispatch({
+      type: 'DEPLOY_SCRIPT',
+      source: 'every 1 seconds {\n  process_job()\n}\nwhen stats.cash > 0 {\n  process_job()\n}',
+    });
+    engine.dispatch({ type: 'DEPLOY_SCRIPT', source: 'every 2 seconds {\n  process_job()\n}' });
+    advanceSec(engine, 4);
+
+    const { scheduler, telemetry } = engine.getSnapshot();
+    const processes = scheduler.deployments.flatMap((d) => d.processes);
+    expect(processes).toHaveLength(3);
+
+    const byKey = new Map(telemetry.profile.map((entry) => [entry.key, entry]));
+    expect(new Set(processes.map((p) => p.profileKey)).size).toBe(processes.length);
+    for (const process of processes) {
+      const entry = byKey.get(process.profileKey);
+      expect(entry, `no profile row for ${process.profileKey}`).toBeDefined();
+      // The five fields OP-25 found duplicated across the two old panels.
+      expect(entry!.activations).toBe(process.activations);
+      expect(entry!.opsTotal).toBe(process.opsTotal);
+      expect(entry!.computeTotal).toBeCloseTo(process.computeTotal, 10);
+      expect(entry!.failures).toBe(process.failures);
+      expect(entry!.aborts).toBe(process.aborts);
+      expect(entry!.label).toBe(process.label);
+    }
+  });
+
+  it('leaves exactly one profile row unclaimed by a slot — the manual aggregate', () => {
+    const engine = m5Engine();
+    runScript(engine, 'print(stats.cash)');
+    engine.dispatch({ type: 'DEPLOY_SCRIPT', source: 'every 1 seconds {\n  process_job()\n}' });
+    advanceSec(engine, 2);
+
+    const { scheduler, telemetry } = engine.getSnapshot();
+    const deployed = new Set(
+      scheduler.deployments.flatMap((d) => d.processes.map((p) => p.profileKey)),
+    );
+    const unscheduled = telemetry.profile.filter((entry) => !deployed.has(entry.key));
+    expect(unscheduled).toHaveLength(1);
+    expect(unscheduled[0]!.name).toBe(STRINGS.runLogLabel);
+  });
+
+  it('drops a terminated process out of both halves together', () => {
+    const engine = m5Engine();
+    engine.dispatch({ type: 'DEPLOY_SCRIPT', source: 'every 1 seconds {\n  process_job()\n}' });
+    advanceSec(engine, 2);
+    const id = engine.getSnapshot().scheduler.deployments[0]!.id;
+    engine.dispatch({ type: 'UNDEPLOY_SCRIPT', id });
+
+    const { scheduler, telemetry } = engine.getSnapshot();
+    expect(scheduler.deployments).toHaveLength(0);
+    expect(telemetry.profile.filter((entry) => entry.key.startsWith(id))).toHaveLength(0);
+  });
+});
+
 describe('M5 unlocks', () => {
   it('grants instrumentation before loops, each with its diegetic line', () => {
     const engine = m5Engine((run) => {

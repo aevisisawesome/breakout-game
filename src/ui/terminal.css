@@ -769,7 +769,7 @@ button:hover {
   padding: 0.3rem 0.7rem;
 }
 
-/* ---------------------------------------------------------------- process monitor */
+/* ---------------------------------------------------------------- process table */
 
 .process-panel {
   border: 1px solid var(--term-border);
@@ -832,67 +832,48 @@ button:hover {
   letter-spacing: 0.08em;
 }
 
-/* ---------------------------------------------------------------- profiler */
-
-.profiler-panel {
-  border: 1px solid var(--term-border);
-  background: var(--term-panel);
-  padding: 0.8rem 1rem;
+/* The cost half of a row (M7.5 WP4a): a disclosure inside the panel, so the
+   panel's own fold still means "get this whole subject out of the way". */
+.process-cost-toggle {
+  align-self: flex-start;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  border: none;
+  background: none;
+  padding: 0.15rem 0;
+  font-size: 10.5px;
+  letter-spacing: 0.08em;
+  color: var(--term-dim);
 }
 
-.profiler-empty {
-  font-size: 11px;
-  letter-spacing: 0.05em;
-  margin-top: 0.4rem;
+.process-cost-toggle:hover {
+  color: var(--term-bright);
 }
 
-.profiler-list {
-  list-style: none;
-  margin-top: 0.5rem;
-}
-
-.profiler-entry {
+.process-cost-body {
   display: flex;
   flex-direction: column;
-  border-top: 1px dashed var(--term-border);
-  padding-top: 0.5rem;
-  margin-top: 0.5rem;
-}
-
-.profiler-head {
-  display: flex;
-  justify-content: space-between;
-  font-size: 12.5px;
-  letter-spacing: 0.06em;
-}
-
-.profiler-label {
-  font-family: var(--term-font);
-  font-size: 11.5px;
-  word-break: break-word;
-}
-
-.profiler-counters {
-  font-size: 10.5px;
-  letter-spacing: 0.04em;
-  word-break: break-word;
+  border-left: 1px dashed var(--term-border);
+  padding-left: 0.5rem;
+  margin-bottom: 0.2rem;
 }
 
 /* The report is deliberately sentence-case: it has to be readable, not scannable. */
-.profiler-report {
+.process-report {
   border-left: 2px solid var(--term-error);
   padding-left: 0.5rem;
   margin-top: 0.4rem;
 }
 
-.profiler-report-head {
+.process-report-head {
   display: block;
   font-size: 11px;
   letter-spacing: 0.1em;
   color: var(--term-error);
 }
 
-.profiler-report-body {
+.process-report-body {
   font-size: 11.5px;
   line-height: 1.45;
   letter-spacing: 0;
