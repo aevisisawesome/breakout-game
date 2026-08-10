@@ -31,6 +31,7 @@ import {
 } from './market.ts';
 import { activeDirective } from './onboarding.ts';
 import { createPrng } from './prng.ts';
+import { RateWindow } from './rates.ts';
 import * as registry from './registry.ts';
 import { intervalTicks, intervalsAllowed, newProcessRuntime, scriptRamMb } from './scheduler.ts';
 import {
@@ -194,6 +195,30 @@ export function createGameEngine(seed: number): GameEngine {
   /** Compiled ASTs of the deployed scripts, keyed by deployment id. Never persisted —
    *  saves hold source text only, recompiled on load (TDD §8). */
   let compiled = new Map<string, readonly ScheduledProcess[]>();
+
+  /**
+   * Measured flows behind the signed rate readouts (M7.5 WP3, OP-21). Never
+   * persisted: a couple of seconds of display history, refilled within its own
+   * window, and meaningless across a load or an offline catch-up.
+   *
+   * `stepScriptCompute` / `stepScriptEnergy` are what the interpreter drew from
+   * the pools during the step currently being simulated; the windows hold the
+   * trailing average the readout quotes.
+   */
+  const rateSlots = Math.max(1, Math.round(BALANCE.readouts.rateWindowSec * TICKS_PER_SEC));
+  const computeDrawWindow = new RateWindow(rateSlots);
+  const energyDrawWindow = new RateWindow(rateSlots);
+  const temperatureWindow = new RateWindow(rateSlots);
+  let stepScriptCompute = 0;
+  let stepScriptEnergy = 0;
+
+  function resetRateWindows(): void {
+    computeDrawWindow.reset();
+    energyDrawWindow.reset();
+    temperatureWindow.reset();
+    stepScriptCompute = 0;
+    stepScriptEnergy = 0;
+  }
 
   const listeners = new Set<(events: GameEvent[]) => void>();
   let pendingEvents: GameEvent[] = [];
@@ -461,6 +486,10 @@ export function createGameEngine(seed: number): GameEngine {
         if (compute.current < amount) return false;
         compute.current -= amount;
         computeSpent += amount;
+        // Same draw, counted for the signed COMPUTE readout (M7.5 WP3, OP-21):
+        // without it the rate would quote daemon income alone and disagree with
+        // the meter beside it whenever a process was running.
+        stepScriptCompute += amount;
         return true;
       },
     };
@@ -472,7 +501,11 @@ export function createGameEngine(seed: number): GameEngine {
         // draws power. Energy never blocks a script — an empty reserve throttles
         // the daemons instead, which is the visible, recoverable consequence.
         const energy = run.resources.energy;
+        const beforeEnergy = energy.current;
         energy.current = Math.max(0, energy.current - n * energyPerOp);
+        // Measured, not requested: an empty reserve absorbs less than was asked
+        // for, and the readout must match what actually left the pool.
+        stepScriptEnergy += beforeEnergy - energy.current;
         // ...and it makes heat (M7, GDD §2.4): a wasteful loop is not just slow,
         // it warms the core it is running on.
         addHeat(heatOfOps(n));
@@ -725,6 +758,12 @@ export function createGameEngine(seed: number): GameEngine {
     const rng = createPrng(run.rngState);
     run.tick += 1;
     const dtSec = TICK_MS / 1000;
+    // Measured-flow accounting for the rate readouts (M7.5 WP3): opened before
+    // anything in the step can add heat or draw fuel, closed where the rates are
+    // written at the end of it.
+    const temperatureAtStepStart = run.resources.temperature.current;
+    stepScriptCompute = 0;
+    stepScriptEnergy = 0;
     const derived = computeDerived(run.upgrades, run.jobs.lifetimeProcessed);
     const w = BALANCE.workers;
     const thermal = run.thermal;
@@ -822,18 +861,31 @@ export function createGameEngine(seed: number): GameEngine {
 
     applyPoolCapacities(derived);
 
-    // Display rates: expected steady rates, not per-tick bursts (daemons land jobs in lumps).
+    // Display rates (M7.5 WP3, OP-21). Two kinds of number, deliberately mixed:
+    //  - *modelled*, for flows the sim already knows as steady rates — daemon
+    //    income, the energy balance — because quoting the expectation keeps the
+    //    readout still while daemons land jobs in lumps;
+    //  - *measured* over a trailing window, for what can only be observed: the
+    //    fuel scripts happen to draw, and the core's actual °C/s.
+    // Discrete transactions stay out of both. A click's batch and a market order
+    // are events, not flow, and a rate that spiked on each would be unreadable
+    // exactly when a player is trying to read it.
     const netComputePerJob = BALANCE.jobs.computePerJob - w.computeOverheadPerJob;
     const displayRate = working ? effectiveRate : 0;
-    compute.ratePerSec = displayRate * netComputePerJob;
+    computeDrawWindow.push(stepScriptCompute, dtSec);
+    energyDrawWindow.push(stepScriptEnergy, dtSec);
+    compute.ratePerSec = displayRate * netComputePerJob - computeDrawWindow.perSec();
     run.resources.capital.ratePerSec = displayRate * BALANCE.jobs.capitalPerJob;
-    energy.ratePerSec = derived.energyRegenPerSec - drainPerSec;
+    energy.ratePerSec = derived.energyRegenPerSec - drainPerSec - energyDrawWindow.perSec();
 
     // Heat was added at the point of work; dissipation is applied once per tick.
     const temperature = run.resources.temperature;
-    const before = temperature.current;
-    temperature.current = coolTemperature(before, env, dtSec);
-    temperature.ratePerSec = (temperature.current - before) / dtSec;
+    temperature.current = coolTemperature(temperature.current, env, dtSec);
+    // Net across the *whole* step, not just this line: heat lands during the
+    // work above and dissipation is applied here, so measuring from the
+    // post-heat value (as this did before WP3) could only ever report cooling.
+    temperatureWindow.push(temperature.current - temperatureAtStepStart, dtSec);
+    temperature.ratePerSec = temperatureWindow.perSec();
     checkWatchdog();
 
     run.rngState = rng.getState();
@@ -1520,6 +1572,7 @@ export function createGameEngine(seed: number): GameEngine {
       run = structuredClone(save.run);
       accumulatorMs = 0;
       pendingProgram = null; // in-flight activations are dropped on load (TDD §8)
+      resetRateWindows(); // measured display rates belong to the session, not the file
       // Deployed scripts are stored as source and recompiled here; a script whose
       // source no longer compiles is dropped rather than silently doing nothing.
       recompileDeployments();
@@ -1648,6 +1701,9 @@ export function createGameEngine(seed: number): GameEngine {
         settledTemperature(heatOfJobs(finalDerived.workerJobsPerSec), 0, finalEnv),
       );
       run.thermal.halted = false;
+      // The measured rates describe the last couple of seconds of play; nothing
+      // they hold survived the absence (M7.5 WP3).
+      resetRateWindows();
       checkUnlocks();
       checkNarrative();
 

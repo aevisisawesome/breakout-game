@@ -258,6 +258,17 @@ export const BALANCE = {
     failureRatioWarn: 0.3,
   },
 
+  /** Resource readouts (M7.5 WP3, OP-19/OP-21). */
+  readouts: {
+    /**
+     * Trailing window, in seconds, over which measured flows are averaged for
+     * display: script fuel draw and the core's °C/s. Long enough that one lumpy
+     * tick does not swing the number, short enough that the reading still
+     * answers "am I winning *now*" inside a demand window.
+     */
+    rateWindowSec: 2,
+  },
+
   save: {
     /** Terminal lines persisted in the save file (TDD §8 "log tail"). */
     terminalTailLines: 60,

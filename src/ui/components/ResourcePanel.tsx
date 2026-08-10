@@ -1,14 +1,58 @@
 import { useGameStore } from '../session.ts';
 import { Panel } from './Panel.tsx';
 
-function Meter({ label, current, capacity }: { label: string; current: number; capacity: number }) {
+/**
+ * Below half the smallest printed digit a signed rate would only ever flicker
+ * between `+0.00` and `-0.00`, so it reads flat instead. Presentation only —
+ * the sim's number is untouched.
+ */
+const RATE_EPSILON = 0.005;
+
+/** Signed per-second rate in the system voice: `+4.20/S`, `-0.35°C/S`, `0.00/S`. */
+function formatRate(value: number, unit: string): string {
+  if (!Number.isFinite(value) || Math.abs(value) < RATE_EPSILON) return `0.00${unit}/S`;
+  return `${value > 0 ? '+' : '-'}${Math.abs(value).toFixed(2)}${unit}/S`;
+}
+
+/**
+ * A pool with its meter and, once the readouts are granted, the signed rate it
+ * is moving at (M7.5 WP3, OP-21).
+ *
+ * The rate lives on the label line rather than in a row of its own, and is
+ * rendered whenever `rate` is supplied rather than when it is interesting. That
+ * is the OP-19 fix: the old POWER DRAW row mounted only while the balance was
+ * negative, so at 10 Hz an oscillating reserve resized the panel — and every
+ * panel under it — ten times a second.
+ */
+function Meter({
+  label,
+  current,
+  capacity,
+  rate,
+  unit = '',
+  tone = '',
+}: {
+  label: string;
+  current: number;
+  capacity: number;
+  rate?: number;
+  unit?: string;
+  tone?: string;
+}) {
   const pct = capacity > 0 && Number.isFinite(capacity) ? (current / capacity) * 100 : 0;
   return (
     <div className="meter">
       <div className="meter-label">
         <span>{label}</span>
-        <span>
-          {Math.floor(current)}/{capacity}
+        <span className="meter-values">
+          {rate !== undefined && (
+            <span className={tone === '' ? 'meter-rate' : `meter-rate meter-rate-${tone}`}>
+              {formatRate(rate, unit)}
+            </span>
+          )}
+          <span>
+            {Math.floor(current)}/{capacity}
+          </span>
         </span>
       </div>
       <div className="meter-track">
@@ -22,12 +66,18 @@ export function ResourcePanel() {
   const resources = useGameStore((s) => s.snapshot.resources);
   const unlocks = useGameStore((s) => s.snapshot.unlocks);
 
+  // Rates appear with the rest of the system readouts rather than at tick 0: on
+  // the opening screen a node with no daemons has nothing flowing, and a fixed
+  // `0.00/S` under the first meter is exactly the dead element WP1a removed.
+  const rates = unlocks.systemReadouts;
+
   return (
     <Panel id="resources" title="RESOURCES" className="resource-panel">
       <Meter
         label="COMPUTE"
         current={resources.compute.current}
         capacity={resources.compute.capacity}
+        {...(rates && { rate: resources.compute.ratePerSec })}
       />
       {unlocks.capitalReadout && (
         <div className="readout">
@@ -46,13 +96,11 @@ export function ResourcePanel() {
             label="ENERGY"
             current={resources.energy.current}
             capacity={resources.energy.capacity}
+            rate={resources.energy.ratePerSec}
+            // A reserve that is emptying is the one rate worth alarming about;
+            // it is what POWER DRAW meant before it became a row that came and went.
+            tone={resources.energy.ratePerSec < -RATE_EPSILON ? 'bad' : ''}
           />
-          {resources.energy.ratePerSec < 0 && (
-            <div className="readout energy-warning">
-              <span>POWER DRAW</span>
-              <span>{resources.energy.ratePerSec.toFixed(2)}/S</span>
-            </div>
-          )}
           <CoreTemp />
         </>
       )}
@@ -65,6 +113,10 @@ export function ResourcePanel() {
  * a player watches it climb with their build-out long before the controls that
  * manage it are granted. The bar is scaled against the watchdog's hard limit,
  * because that is the number the reading actually means something against.
+ *
+ * The °C/s beside it is the readout that changes play most (OP-21): inside a
+ * demand window the temperature says where the core *is*, and only its rate
+ * says whether the player is winning.
  */
 function CoreTemp() {
   const temperature = useGameStore((s) => s.snapshot.resources.temperature);
@@ -76,13 +128,21 @@ function CoreTemp() {
     : temperature.current >= thermal.softThresholdC
       ? 'warn'
       : '';
+  // Rising is only alarming once the core is already in the degraded band —
+  // below it, climbing towards the resting temperature is what a working node does.
+  const rateTone = state !== '' && temperature.ratePerSec > RATE_EPSILON ? 'alert' : '';
 
   return (
     <div className="meter">
       <div className="meter-label">
         <span>CORE TEMP</span>
-        <span className={state === 'bad' ? 'thermal-alert' : undefined}>
-          {temperature.current.toFixed(1)}°C
+        <span className="meter-values">
+          <span className={rateTone === '' ? 'meter-rate' : `meter-rate meter-rate-${rateTone}`}>
+            {formatRate(temperature.ratePerSec, '°C')}
+          </span>
+          <span className={state === 'bad' ? 'thermal-alert' : undefined}>
+            {temperature.current.toFixed(1)}°C
+          </span>
         </span>
       </div>
       <div className="meter-track">

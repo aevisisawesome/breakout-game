@@ -176,6 +176,28 @@ button:hover {
   flex-direction: column;
   flex: 1;
   min-height: 0;
+  /* Anchor for the follow control (OP-27), which floats over the output rather
+     than sitting under it — a control that appeared in the flow would resize the
+     output the moment the player scrolled, which is the reading position again. */
+  position: relative;
+}
+
+.terminal-follow {
+  position: absolute;
+  right: 0.6rem;
+  bottom: 0.4rem;
+  padding: 0.15rem 0.5rem;
+  font: inherit;
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  color: var(--term-bright);
+  background: var(--term-panel);
+  border: 1px solid var(--term-border);
+  cursor: pointer;
+}
+
+.terminal-follow:hover {
+  border-color: var(--term-fg);
 }
 
 .terminal-output {
@@ -349,6 +371,26 @@ button:hover {
   letter-spacing: 0.08em;
 }
 
+/* Signed rate + level, grouped at the right of a meter's label line
+   (M7.5 WP3, OP-19/OP-21). The rate is always rendered once granted, so the
+   label line's height never changes and nothing below it can be shifted. */
+.meter-values {
+  display: flex;
+  gap: 0.6rem;
+}
+
+.meter-rate {
+  color: var(--term-dim);
+}
+
+.meter-rate-bad {
+  color: var(--term-error);
+}
+
+.meter-rate-alert {
+  color: var(--term-bright);
+}
+
 .meter-track {
   height: 8px;
   border: 1px solid var(--term-border);
@@ -366,11 +408,6 @@ button:hover {
   justify-content: space-between;
   font-size: 13px;
   padding: 0.15rem 0;
-}
-
-.energy-warning {
-  color: var(--term-error);
-  font-size: 12px;
 }
 
 .overclock-active {
