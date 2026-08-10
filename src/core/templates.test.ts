@@ -190,7 +190,7 @@ describe('generated code is accepted by the engine', () => {
     run.resources.capital.current = 500;
     run.jobs.waiting = 30;
     const engine = createGameEngine(42);
-    engine.load({ version: 7, savedAt: 0, meta: newMetaState(), run });
+    engine.load({ version: 8, savedAt: 0, meta: newMetaState(), run });
 
     const def = TEMPLATES.find((t) => t.id === 'auto-processor')!;
     const source = renderTemplate(def, templateDefaults(def), BASE);
@@ -214,7 +214,7 @@ describe('generated code is accepted by the engine', () => {
     run.resources.capital.current = 2000;
     run.jobs.waiting = 40;
     const engine = createGameEngine(42);
-    engine.load({ version: 7, savedAt: 0, meta: newMetaState(), run });
+    engine.load({ version: 8, savedAt: 0, meta: newMetaState(), run });
     for (let i = 0; i < 20; i++) engine.tick(100); // mount the exchange
     expect(engine.getSnapshot().market.unlocked).toBe(true);
     return engine;

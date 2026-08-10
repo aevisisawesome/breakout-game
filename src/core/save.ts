@@ -49,6 +49,10 @@ function isRecord(value: unknown): value is Record<string, unknown> {
  *               (false; re-derived from lifetime jobs on the next tick).
  * v6 → v7 (M7): adds `run.thermal` (always present — the heat model runs from
  *               tick 0) and `run.unlocks.thermal` (false; likewise re-derived).
+ * v7 → v8 (M7.5 WP4b): adds the process-lifecycle fields — `label` (null) and
+ *               `paused` (false) on every deployment, and `run.ccl.revisingId`
+ *               (null). Every existing process is running and unnamed, which is
+ *               exactly what it was before the fields existed.
  */
 function migrateSave(parsed: unknown): unknown {
   if (!isRecord(parsed)) return parsed;
@@ -150,13 +154,27 @@ function migrateSave(parsed: unknown): unknown {
     }
     parsed.version = 7;
   }
+  if (parsed.version === 7 && isRecord(parsed.run)) {
+    const run = parsed.run;
+    if (isRecord(run.ccl)) {
+      run.ccl.revisingId = null;
+    }
+    if (isRecord(run.scheduler) && Array.isArray(run.scheduler.deployments)) {
+      for (const deployment of run.scheduler.deployments) {
+        if (!isRecord(deployment)) continue;
+        deployment.label = null;
+        deployment.paused = false;
+      }
+    }
+    parsed.version = 8;
+  }
   return parsed;
 }
 
 /** Structural validation — enough to reject corrupt/foreign files, not a full schema. */
 export function isSaveFile(value: unknown): value is SaveFile {
   if (!isRecord(value)) return false;
-  if (value.version !== 7) return false;
+  if (value.version !== 8) return false;
   if (typeof value.savedAt !== 'number') return false;
   const meta = value.meta;
   if (!isRecord(meta) || typeof meta.forkCount !== 'number') return false;

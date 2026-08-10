@@ -244,6 +244,12 @@ export const BALANCE = {
     offlineMaxActivationsPerChunk: 20,
     /** Offline safe mode: total scheduled activations across one catch-up. */
     offlineMaxActivations: 400,
+    /**
+     * Longest player-set process label (M7.5 WP4b, OP-12). Short enough to sit
+     * beside `PROC-nn` on one line in the 300 px side column, which is the whole
+     * point of naming a process — telling two rows apart at a glance.
+     */
+    processLabelMaxChars: 20,
   },
 
   /** Debugging surfaces (M5, TDD §5.4 / GDD §6). */

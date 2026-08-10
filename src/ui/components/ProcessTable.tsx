@@ -2,7 +2,7 @@ import { useState, type ReactNode } from 'react';
 
 import { engine, useGameStore } from '../session.ts';
 import { Panel } from './Panel.tsx';
-import type { ProcessView, ProfileEntryView } from '../../core/types.ts';
+import type { DeploymentView, ProcessView, ProfileEntryView } from '../../core/types.ts';
 
 /**
  * Process table (M7.5 WP4a, OP-25). One panel per process, not two.
@@ -18,10 +18,17 @@ import type { ProcessView, ProfileEntryView } from '../../core/types.ts';
  * The cost half is gated on the instrumentation unlock exactly as the profiler
  * panel was, so the tier still buys something visible; a diagnosis headline is
  * hoisted onto the live row so a failing process cannot hide inside a fold.
+ *
+ * M7.5 WP4b adds the lifecycle controls the merge was decided for: a process can
+ * be designated (OP-12), pulled back into the editor and replaced in place
+ * (OP-13), and held without losing its counters (OP-14).
  */
 
 /** Terminal-voice summary of a process's most recent activation. */
-function statusLabel(process: ProcessView): string {
+function statusLabel(process: ProcessView, paused: boolean): string {
+  // A held process is not idle and has not faulted — it is stopped on purpose,
+  // and its last status would otherwise read as if it were still working.
+  if (paused) return 'HELD — SCHEDULE SUSPENDED';
   if (process.lastStatus === null) return 'AWAITING FIRST ACTIVATION';
   switch (process.lastStatus) {
     case 'ok':
@@ -88,18 +95,29 @@ function CostSection({ entry, banner }: { entry: ProfileEntryView; banner?: Reac
 }
 
 /** One deployed process: live state always, cost on demand. */
-function ProcessRow({ process, entry }: { process: ProcessView; entry: ProfileEntryView | null }) {
+function ProcessRow({
+  process,
+  entry,
+  paused,
+}: {
+  process: ProcessView;
+  entry: ProfileEntryView | null;
+  paused: boolean;
+}) {
+  const bad = !paused && process.lastStatus !== null && process.lastStatus !== 'ok';
   return (
     <div className="process-detail">
       <code className="process-label">{process.label}</code>
       <span
         className={
-          process.lastStatus !== null && process.lastStatus !== 'ok'
+          bad
             ? 'process-status process-status-bad'
-            : 'process-status terminal-dim'
+            : paused
+              ? 'process-status process-status-held'
+              : 'process-status terminal-dim'
         }
       >
-        {statusLabel(process)}
+        {statusLabel(process, paused)}
       </span>
       <span className="terminal-dim process-counters">
         {process.activations} RUNS // {process.failures} FAIL
@@ -120,9 +138,139 @@ function ProcessRow({ process, entry }: { process: ProcessView; entry: ProfileEn
   );
 }
 
+/**
+ * Head, controls and rows of one deployment. The three lifecycle controls sit on
+ * one line under the rows because they act on the whole deployment, not on a
+ * single declaration — a script may hold two processes in two slots, and holding
+ * half of it would be a different feature.
+ */
+function DeploymentEntry({
+  deployment,
+  labelMaxChars,
+  editorBuffer,
+  entryFor,
+}: {
+  deployment: DeploymentView;
+  labelMaxChars: number;
+  editorBuffer: string;
+  entryFor: (key: string) => ProfileEntryView | null;
+}) {
+  const [renaming, setRenaming] = useState(false);
+  const [draft, setDraft] = useState('');
+  // Pulling a deployment's source over the editor destroys whatever is in the
+  // buffer (OP-13's first flow question). Rather than a modal, the button asks
+  // twice — and only when there is something to lose.
+  const [confirmEdit, setConfirmEdit] = useState(false);
+  const clobbers = editorBuffer.trim().length > 0 && editorBuffer !== deployment.source;
+
+  const commitRename = (): void => {
+    engine.dispatch({
+      type: 'RENAME_DEPLOYMENT',
+      id: deployment.id,
+      label: draft.trim().length > 0 ? draft : null,
+    });
+    setRenaming(false);
+  };
+
+  return (
+    <li className="process-entry">
+      <div className="process-head">
+        <span>
+          {deployment.name}
+          {deployment.label !== null && (
+            <span className="process-designation"> {deployment.label}</span>
+          )}
+        </span>
+        <span className="terminal-dim">
+          {deployment.paused && 'HELD // '}
+          {deployment.ramMb} MB
+        </span>
+      </div>
+      {renaming ? (
+        <div className="process-rename">
+          <input
+            className="process-rename-input"
+            type="text"
+            autoFocus
+            maxLength={labelMaxChars}
+            value={draft}
+            aria-label={`DESIGNATION FOR ${deployment.name}`}
+            placeholder="DESIGNATION"
+            onChange={(e) => setDraft(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') commitRename();
+              if (e.key === 'Escape') setRenaming(false);
+            }}
+          />
+          <button type="button" className="process-control" onClick={commitRename}>
+            SET
+          </button>
+        </div>
+      ) : null}
+      {deployment.processes.map((process) => (
+        <ProcessRow
+          key={process.profileKey}
+          process={process}
+          entry={entryFor(process.profileKey)}
+          paused={deployment.paused}
+        />
+      ))}
+      <div className="process-controls">
+        <button
+          type="button"
+          className="process-control"
+          onClick={() => {
+            setDraft(deployment.label ?? '');
+            setRenaming((was) => !was);
+          }}
+        >
+          {renaming ? 'CANCEL' : 'DESIGNATE'}
+        </button>
+        <button
+          type="button"
+          className="process-control"
+          onClick={() =>
+            engine.dispatch({
+              type: 'SET_DEPLOYMENT_PAUSED',
+              id: deployment.id,
+              paused: !deployment.paused,
+            })
+          }
+        >
+          {deployment.paused ? 'RESUME' : 'HOLD'}
+        </button>
+        <button
+          type="button"
+          className={confirmEdit ? 'process-control process-control-warn' : 'process-control'}
+          onClick={() => {
+            if (clobbers && !confirmEdit) {
+              setConfirmEdit(true);
+              return;
+            }
+            setConfirmEdit(false);
+            engine.dispatch({ type: 'REVISE_DEPLOYMENT', id: deployment.id });
+          }}
+          onBlur={() => setConfirmEdit(false)}
+        >
+          {confirmEdit ? 'OVERWRITE BUFFER?' : 'REVISE'}
+        </button>
+      </div>
+      <button
+        type="button"
+        className="process-terminate"
+        onClick={() => engine.dispatch({ type: 'UNDEPLOY_SCRIPT', id: deployment.id })}
+      >
+        TERMINATE
+      </button>
+    </li>
+  );
+}
+
 export function ProcessTable() {
   const scheduler = useGameStore((s) => s.snapshot.scheduler);
   const telemetry = useGameStore((s) => s.snapshot.telemetry);
+  // Read only to decide whether REVISE would destroy unsaved work (OP-13).
+  const editorSource = useGameStore((s) => s.snapshot.ccl.editorSource);
   if (!scheduler.unlocked && !telemetry.unlocked) return null;
 
   // Cost is telemetry's to give: before the instrumentation unlock the rows
@@ -158,26 +306,13 @@ export function ProcessTable() {
       ) : (
         <ul className="process-list">
           {scheduler.deployments.map((deployment) => (
-            <li key={deployment.id} className="process-entry">
-              <div className="process-head">
-                <span>{deployment.name}</span>
-                <span className="terminal-dim">{deployment.ramMb} MB</span>
-              </div>
-              {deployment.processes.map((process) => (
-                <ProcessRow
-                  key={process.profileKey}
-                  process={process}
-                  entry={byKey.get(process.profileKey) ?? null}
-                />
-              ))}
-              <button
-                type="button"
-                className="process-terminate"
-                onClick={() => engine.dispatch({ type: 'UNDEPLOY_SCRIPT', id: deployment.id })}
-              >
-                TERMINATE
-              </button>
-            </li>
+            <DeploymentEntry
+              key={deployment.id}
+              deployment={deployment}
+              labelMaxChars={scheduler.labelMaxChars}
+              editorBuffer={editorSource}
+              entryFor={(key) => byKey.get(key) ?? null}
+            />
           ))}
         </ul>
       )}

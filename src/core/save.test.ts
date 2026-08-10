@@ -40,6 +40,29 @@ describe('save serialization', () => {
     expect(savedB.run.tick).toBe(savedA.run.tick);
   });
 
+  it('migrates a v7 save to v8, defaulting every process to running and unnamed', () => {
+    // M7.5 WP4b: the only shape change is the lifecycle fields, so a v7 save must
+    // come back describing exactly the situation it was in — nothing held, nothing
+    // designated, no revision in flight.
+    const engine = createGameEngine(42);
+    engine.tick(3000);
+    const v8 = engine.save(0);
+    const v7 = JSON.parse(serializeSave(v8)) as Record<string, unknown>;
+    v7.version = 7;
+    const run = v7.run as Record<string, unknown>;
+    delete (run.ccl as Record<string, unknown>).revisingId;
+    (run.scheduler as { deployments: Record<string, unknown>[] }).deployments = [
+      { id: 'dep-1', name: 'PROC-01', source: 'every 1 seconds {\n  process_job()\n}' },
+    ];
+
+    const migrated = deserializeSave(JSON.stringify(v7));
+    expect(migrated).not.toBeNull();
+    expect(migrated!.version).toBe(8);
+    expect(migrated!.run.ccl.revisingId).toBeNull();
+    expect(migrated!.run.scheduler.deployments[0]!.label).toBeNull();
+    expect(migrated!.run.scheduler.deployments[0]!.paused).toBe(false);
+  });
+
   it('rejects corrupt or foreign payloads', () => {
     expect(deserializeSave('not json at all')).toBeNull();
     expect(deserializeSave('{}')).toBeNull();

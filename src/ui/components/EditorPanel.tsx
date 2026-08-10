@@ -96,12 +96,19 @@ export function EditorPanel() {
     };
   }, [ccl.unlocked]);
 
-  // Replace the buffer when a different session state is loaded (import/restore).
+  // Replace the buffer when the sim changed it under us: a different session
+  // state loaded (import/restore), or a deployment's source pulled back in for
+  // revision (M7.5 WP4b, OP-13). CodeMirror owns its document, so it cannot
+  // re-render from the snapshot the way a controlled input would.
   useEffect(
     () =>
       engine.subscribe((events) => {
         const view = viewRef.current;
-        if (view === null || !events.some((e) => e.type === 'STATE_LOADED')) return;
+        if (
+          view === null ||
+          !events.some((e) => e.type === 'STATE_LOADED' || e.type === 'EDITOR_SOURCE_SET')
+        )
+          return;
         const source = engine.getSnapshot().ccl.editorSource;
         if (view.state.doc.toString() !== source) {
           view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: source } });
@@ -125,9 +132,21 @@ export function EditorPanel() {
     if (source !== null) engine.dispatch({ type: 'RUN_SCRIPT', source });
   };
 
+  /**
+   * DEPLOY installs a new process; REDEPLOY replaces the one the buffer was
+   * pulled from. They are the same button because they are the same intent — the
+   * player is committing what is in the editor — and separating them would leave
+   * the old copy running whenever the wrong one was pressed (OP-13).
+   */
   const handleDeploy = (): void => {
     const source = takeSource();
-    if (source !== null) engine.dispatch({ type: 'DEPLOY_SCRIPT', source });
+    if (source === null) return;
+    const target = ccl.revising;
+    engine.dispatch(
+      target === null
+        ? { type: 'DEPLOY_SCRIPT', source }
+        : { type: 'REDEPLOY_SCRIPT', id: target.id, source },
+    );
   };
 
   /** Replace the buffer with generated template code (GDD §25: the code stays visible). */
@@ -159,13 +178,29 @@ export function EditorPanel() {
         </button>
         {scheduler.unlocked && (
           <button type="button" className="editor-run" onClick={handleDeploy}>
-            DEPLOY
+            {ccl.revising === null ? 'DEPLOY' : `REDEPLOY ${ccl.revising.name}`}
+          </button>
+        )}
+        {ccl.revising !== null && (
+          <button
+            type="button"
+            className="editor-run editor-revision-cancel"
+            onClick={() => engine.dispatch({ type: 'CANCEL_REVISION' })}
+          >
+            DROP LINK
           </button>
         )}
         <span className="editor-status terminal-dim">
           {ccl.lastRun ? lastActionLabel(ccl.lastRun, ccl.maxOpsPerActivation) : 'NO ACTIVATIONS'}
         </span>
       </div>
+      {ccl.revising !== null && (
+        <p className="editor-revision terminal-dim">
+          REVISING {ccl.revising.name}
+          {ccl.revising.label !== null && ` ${ccl.revising.label}`} // COMMIT REPLACES IT IN PLACE
+          // COUNTERS RESET
+        </p>
+      )}
       <TemplateLibrary onInsert={handleInsertTemplate} />
       <div className="editor-reference">
         <button

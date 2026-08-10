@@ -547,6 +547,9 @@ button:hover {
   display: flex;
   align-items: center;
   gap: 0.8rem;
+  /* Three controls fit at 1280 px; on a phone the revision pair wraps rather
+     than pushing the status line off the panel (M7.5 WP4b). */
+  flex-wrap: wrap;
 }
 
 .editor-run {
@@ -554,6 +557,21 @@ button:hover {
   padding: 0.3rem 1.6rem;
   border-color: var(--term-dim);
   color: var(--term-bright);
+}
+
+/* Revision link (M7.5 WP4b, OP-13): the buffer is a rewrite of a resident
+   process, and the DEPLOY button says so — this line says what committing costs. */
+.editor-revision-cancel {
+  padding: 0.3rem 0.8rem;
+  letter-spacing: 0.1em;
+}
+
+.editor-revision {
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  margin-top: 0.4rem;
+  border-left: 2px solid var(--term-dim);
+  padding-left: 0.5rem;
 }
 
 .editor-status {
@@ -825,11 +843,68 @@ button:hover {
   color: var(--term-error);
 }
 
+/* Held is neither healthy nor faulting: the operator stopped it (M7.5 WP4b). */
+.process-status-held {
+  color: var(--term-bright);
+}
+
 .process-terminate {
   width: 100%;
   text-align: left;
   font-size: 11px;
   letter-spacing: 0.08em;
+}
+
+/* Lifecycle controls (M7.5 WP4b): designate / hold / revise, on one line above
+   TERMINATE — which stays alone and full width, because it is the destructive one. */
+.process-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+  margin-bottom: 0.3rem;
+}
+
+.process-control {
+  flex: 1 1 auto;
+  text-align: center;
+  font-size: 10.5px;
+  letter-spacing: 0.06em;
+  padding: 0.2rem 0.3rem;
+}
+
+/* The confirm state has to beat `button:hover`: the cursor is on the button at
+   exactly the moment the warning matters. */
+.process-control-warn,
+.process-control-warn:hover {
+  color: var(--term-error);
+  border-color: var(--term-error);
+}
+
+.process-designation {
+  color: var(--term-bright);
+}
+
+.process-rename {
+  display: flex;
+  gap: 0.3rem;
+  margin: 0.25rem 0;
+}
+
+.process-rename-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  background: var(--term-bg);
+  border: 1px solid var(--term-border);
+  color: var(--term-bright);
+  font-family: var(--term-font);
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  padding: 0.2rem 0.3rem;
+}
+
+.process-rename .process-control {
+  flex: 0 0 auto;
 }
 
 /* The cost half of a row (M7.5 WP4a): a disclosure inside the panel, so the

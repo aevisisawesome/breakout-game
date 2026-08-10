@@ -33,7 +33,13 @@ import { activeDirective } from './onboarding.ts';
 import { createPrng } from './prng.ts';
 import { RateWindow } from './rates.ts';
 import * as registry from './registry.ts';
-import { intervalTicks, intervalsAllowed, newProcessRuntime, scriptRamMb } from './scheduler.ts';
+import {
+  intervalTicks,
+  intervalsAllowed,
+  newProcessRuntime,
+  sanitizeProcessLabel,
+  scriptRamMb,
+} from './scheduler.ts';
 import {
   coolTemperature,
   demandWindowTicksRemaining,
@@ -50,6 +56,7 @@ import { clamp } from './util/math.ts';
 import type {
   ActionResult,
   CclActionReport,
+  DeploymentState,
   DeploymentView,
   ExecSourceKind,
   GameEngine,
@@ -139,6 +146,7 @@ export function newRunState(seed: number): RunState {
         commandCalls: 0,
         commandFailures: 0,
       },
+      revisingId: null,
     },
     scheduler: { deployments: [], nextId: 1 },
     telemetry: { log: [], nextLogId: 1 },
@@ -635,6 +643,9 @@ export function createGameEngine(seed: number): GameEngine {
     for (const deployment of run.scheduler.deployments) {
       const processes = compiled.get(deployment.id);
       if (!processes) continue;
+      // A held process runs nothing and samples nothing — including its guards,
+      // which would otherwise keep drawing fuel while held (M7.5 WP4b, OP-14).
+      if (deployment.paused) continue;
       for (let i = 0; i < processes.length; i++) {
         const process = processes[i]!; // compiled and runtime arrays are index-aligned
         const runtime = deployment.processes[i];
@@ -689,6 +700,7 @@ export function createGameEngine(seed: number): GameEngine {
     for (const deployment of run.scheduler.deployments) {
       const processes = compiled.get(deployment.id);
       if (!processes) continue;
+      if (deployment.paused) continue; // held processes do not run offline either
       for (let i = 0; i < processes.length; i++) {
         const process = processes[i]!; // index-aligned with the runtime array
         const runtime = deployment.processes[i];
@@ -1064,8 +1076,16 @@ export function createGameEngine(seed: number): GameEngine {
     return { ok: true };
   }
 
-  function deployScript(source: string): ActionResult {
-    terminal('input', `> ${STRINGS.deployInput}`);
+  /**
+   * Shared front half of DEPLOY and REDEPLOY: compile, then check the program
+   * against slots and RAM. `replacing` is the deployment a redeploy is about to
+   * remove — its slots and RAM are discounted, because a revision must not be
+   * refused by the space its own predecessor is still holding (OP-13).
+   */
+  function admitProgram(
+    source: string,
+    replacing: DeploymentState | null,
+  ): { program: Program; ramMb: number } | ActionResult {
     const reject = (message: string): ActionResult => {
       terminal('error', message);
       reportAction('deploy', 'rejected', { message });
@@ -1078,14 +1098,25 @@ export function createGameEngine(seed: number): GameEngine {
     if (!intervalsAllowed(program, TICKS_PER_SEC)) return reject(STRINGS.deployInterval);
 
     const derived = computeDerived(run.upgrades, run.jobs.lifetimeProcessed);
-    const slotsUsed = run.scheduler.deployments.reduce((n, d) => n + d.processes.length, 0);
+    const slotsUsed =
+      run.scheduler.deployments.reduce((n, d) => n + d.processes.length, 0) -
+      (replacing?.processes.length ?? 0);
     if (slotsUsed + program.processes.length > derived.schedulerSlots) {
       return reject(STRINGS.deployNoSlots);
     }
     const ramMb = scriptRamMb(program);
-    if (derived.ramUsedMb + deployedRamMb() + ramMb > derived.ramCapacityMb) {
+    const residentRam = deployedRamMb() - (replacing?.ramMb ?? 0);
+    if (derived.ramUsedMb + residentRam + ramMb > derived.ramCapacityMb) {
       return reject(STRINGS.deployNoRam);
     }
+    return { program, ramMb };
+  }
+
+  function deployScript(source: string): ActionResult {
+    terminal('input', `> ${STRINGS.deployInput}`);
+    const admitted = admitProgram(source, null);
+    if (!('program' in admitted)) return admitted;
+    const { program, ramMb } = admitted;
 
     const id = `dep-${run.scheduler.nextId}`;
     const name = `PROC-${String(run.scheduler.nextId).padStart(2, '0')}`;
@@ -1093,13 +1124,15 @@ export function createGameEngine(seed: number): GameEngine {
     run.scheduler.deployments.push({
       id,
       name,
+      label: null,
       source,
       ramMb,
       deployedAtTick: run.tick,
+      paused: false,
       processes: program.processes.map(() => newProcessRuntime(run.tick)),
     });
     compiled.set(id, program.processes);
-    applyPoolCapacities(derived);
+    applyPoolCapacities(computeDerived(run.upgrades, run.jobs.lifetimeProcessed));
 
     const count = program.processes.length;
     const summary = `${name} // ${count} SLOT${count === 1 ? '' : 'S'} // RAM +${ramMb} MB`;
@@ -1107,6 +1140,42 @@ export function createGameEngine(seed: number): GameEngine {
     reportAction('deploy', 'ok', { message: summary });
     setFlag('first-deploy');
     checkNarrative();
+    return { ok: true };
+  }
+
+  /**
+   * Replace a resident deployment's source in place (M7.5 WP4b, OP-13). The
+   * ordinal, the designation and the slot survive; the runtime counters do not.
+   * Resetting them is the honest choice — the aggregates and the plain-language
+   * report describe the *code* that ran, and carrying them across a rewrite would
+   * average two different programs into one diagnosis. The terminal says so.
+   */
+  function redeployScript(id: string, source: string): ActionResult {
+    terminal('input', `> ${STRINGS.redeployInput}`);
+    const index = run.scheduler.deployments.findIndex((d) => d.id === id);
+    const existing = index < 0 ? null : run.scheduler.deployments[index]!;
+    if (existing === null) {
+      terminal('error', STRINGS.redeployUnknown);
+      reportAction('deploy', 'rejected', { message: STRINGS.redeployUnknown });
+      return { ok: false, reason: STRINGS.redeployUnknown };
+    }
+    const admitted = admitProgram(source, existing);
+    if (!('program' in admitted)) return admitted;
+    const { program, ramMb } = admitted;
+
+    existing.source = source;
+    existing.ramMb = ramMb;
+    existing.deployedAtTick = run.tick;
+    existing.paused = false;
+    existing.processes = program.processes.map(() => newProcessRuntime(run.tick));
+    compiled.set(id, program.processes);
+    applyPoolCapacities(computeDerived(run.upgrades, run.jobs.lifetimeProcessed));
+    run.ccl.revisingId = null;
+
+    const count = program.processes.length;
+    const summary = `${displayName(existing)} // ${count} SLOT${count === 1 ? '' : 'S'} // RAM ${ramMb} MB // ${STRINGS.redeployCountersReset}`;
+    terminal('result', `${STRINGS.redeployCommitted} // ${summary}`);
+    reportAction('deploy', 'ok', { message: summary });
     return { ok: true };
   }
 
@@ -1118,8 +1187,94 @@ export function createGameEngine(seed: number): GameEngine {
     }
     const [removed] = run.scheduler.deployments.splice(index, 1);
     compiled.delete(id);
+    // A revision of a process that no longer exists is a promise DEPLOY cannot
+    // keep, so the link goes with it. The buffer stays — the player's text is theirs.
+    if (run.ccl.revisingId === id) run.ccl.revisingId = null;
     applyPoolCapacities(computeDerived(run.upgrades, run.jobs.lifetimeProcessed));
-    terminal('result', `${STRINGS.undeployed} // ${removed!.name} // RAM -${removed!.ramMb} MB`);
+    terminal(
+      'result',
+      `${STRINGS.undeployed} // ${displayName(removed!)} // RAM -${removed!.ramMb} MB`,
+    );
+    return { ok: true };
+  }
+
+  /** How a deployment is named in the terminal: the ordinal, plus a designation if set. */
+  function displayName(deployment: DeploymentState): string {
+    return deployment.label === null ? deployment.name : `${deployment.name} ${deployment.label}`;
+  }
+
+  /** Set or clear the operator designation (M7.5 WP4b, OP-12). */
+  function renameDeployment(id: string, raw: string | null): ActionResult {
+    const deployment = run.scheduler.deployments.find((d) => d.id === id);
+    if (!deployment) {
+      terminal('error', STRINGS.undeployUnknown);
+      return { ok: false, reason: STRINGS.undeployUnknown };
+    }
+    const label = raw === null ? null : sanitizeProcessLabel(raw);
+    // Something was typed and none of it survived normalization: say so rather
+    // than silently clearing a designation the player was trying to set.
+    if (label === null && raw !== null && raw.trim().length > 0) {
+      terminal('error', STRINGS.renameRejected);
+      return { ok: false, reason: STRINGS.renameRejected };
+    }
+    deployment.label = label;
+    terminal(
+      'result',
+      label === null
+        ? `${STRINGS.renameCleared} // ${deployment.name}`
+        : `${STRINGS.renamed} // ${deployment.name} // ${label}`,
+    );
+    return { ok: true };
+  }
+
+  /**
+   * Hold or resume a deployment (M7.5 WP4b, OP-14). Resuming re-arms rather than
+   * resumes mid-schedule: `nextDueTick` is set to now (the precedent
+   * `advanceOffline` sets), so an `every` process fires promptly instead of at a
+   * stale time, and `lastCondition` is cleared, so a `when` guard whose condition
+   * stood true throughout the hold fires on the crossing it is owed instead of
+   * never firing again.
+   */
+  function setDeploymentPaused(id: string, paused: boolean): ActionResult {
+    const deployment = run.scheduler.deployments.find((d) => d.id === id);
+    if (!deployment) {
+      terminal('error', STRINGS.undeployUnknown);
+      return { ok: false, reason: STRINGS.undeployUnknown };
+    }
+    if (deployment.paused === paused) return { ok: true };
+    deployment.paused = paused;
+    if (!paused) {
+      for (const runtime of deployment.processes) {
+        runtime.nextDueTick = run.tick;
+        runtime.lastCondition = false;
+      }
+    }
+    terminal(
+      'result',
+      `${paused ? STRINGS.processHeld : STRINGS.processResumed} // ${displayName(deployment)}`,
+    );
+    return { ok: true };
+  }
+
+  /** Pull a deployment's source back into the editor for revision (OP-13). */
+  function reviseDeployment(id: string): ActionResult {
+    const deployment = run.scheduler.deployments.find((d) => d.id === id);
+    if (!deployment) {
+      terminal('error', STRINGS.undeployUnknown);
+      return { ok: false, reason: STRINGS.undeployUnknown };
+    }
+    run.ccl.editorSource = deployment.source;
+    run.ccl.revisingId = id;
+    emit({ type: 'EDITOR_SOURCE_SET' });
+    terminal('result', `${STRINGS.reviseLoaded} // ${displayName(deployment)}`);
+    terminal('system', STRINGS.reviseHint);
+    return { ok: true };
+  }
+
+  function cancelRevision(): ActionResult {
+    if (run.ccl.revisingId === null) return { ok: true };
+    run.ccl.revisingId = null;
+    terminal('system', STRINGS.reviseCancelled);
     return { ok: true };
   }
 
@@ -1336,6 +1491,21 @@ export function createGameEngine(seed: number): GameEngine {
         case 'UNDEPLOY_SCRIPT':
           result = undeployScript(action.id);
           break;
+        case 'REDEPLOY_SCRIPT':
+          result = redeployScript(action.id, action.source);
+          break;
+        case 'RENAME_DEPLOYMENT':
+          result = renameDeployment(action.id, action.label);
+          break;
+        case 'SET_DEPLOYMENT_PAUSED':
+          result = setDeploymentPaused(action.id, action.paused);
+          break;
+        case 'REVISE_DEPLOYMENT':
+          result = reviseDeployment(action.id);
+          break;
+        case 'CANCEL_REVISION':
+          result = cancelRevision();
+          break;
         case 'SET_EDITOR_SOURCE':
           result = setEditorSource(action.source);
           break;
@@ -1385,8 +1555,10 @@ export function createGameEngine(seed: number): GameEngine {
         return {
           id: deployment.id,
           name: deployment.name,
+          label: deployment.label,
           source: deployment.source,
           ramMb: deployment.ramMb,
+          paused: deployment.paused,
           processes: deployment.processes.map((runtime, i): ProcessView => {
             const process = processes[i];
             return {
@@ -1511,6 +1683,13 @@ export function createGameEngine(seed: number): GameEngine {
           iterationLimit: derived.iterationLimit,
           runCount: run.ccl.runCount,
           lastRun: run.ccl.lastRun ? { ...run.ccl.lastRun } : null,
+          // Resolved against the resident deployments, so a target terminated
+          // since the pull reads as null rather than as a promise DEPLOY cannot
+          // keep (M7.5 WP4b, OP-13).
+          revising: (() => {
+            const target = run.scheduler.deployments.find((d) => d.id === run.ccl.revisingId);
+            return target ? { id: target.id, name: target.name, label: target.label } : null;
+          })(),
           constructs: {
             conditions: run.unlocks.conditions,
             scheduling: run.unlocks.scheduler,
@@ -1531,6 +1710,7 @@ export function createGameEngine(seed: number): GameEngine {
           unlocked: run.unlocks.scheduler,
           slotsTotal: derived.schedulerSlots,
           slotsUsed: run.scheduler.deployments.reduce((n, d) => n + d.processes.length, 0),
+          labelMaxChars: BALANCE.scheduler.processLabelMaxChars,
           deployments: deploymentViews,
         },
         telemetry: {
@@ -1563,7 +1743,7 @@ export function createGameEngine(seed: number): GameEngine {
 
     save(now: number): SaveFile {
       return {
-        version: 7,
+        version: 8,
         savedAt: now,
         meta: structuredClone(meta),
         run: structuredClone(run),

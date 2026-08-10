@@ -41,7 +41,7 @@ function engineWith(setup: (run: RunState) => void, seed = 42): GameEngine {
   const run = newRunState(seed);
   setup(run);
   const engine = createGameEngine(seed);
-  engine.load({ version: 7, savedAt: 0, meta: newMetaState(), run });
+  engine.load({ version: 8, savedAt: 0, meta: newMetaState(), run });
   return engine;
 }
 

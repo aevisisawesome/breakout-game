@@ -34,6 +34,26 @@ export function intervalsAllowed(program: Program, ticksPerSec: number): boolean
   );
 }
 
+/**
+ * Normalize an operator-typed process designation into the system voice
+ * (M7.5 WP4b, OP-12). GDD §33.3 is a promise about every player-facing string,
+ * and a name the player types is player-facing — so rather than refusing input
+ * that is not in voice, the input is *put* in voice: upper-cased, reduced to the
+ * characters the terminal already uses, collapsed and cut to a length that fits
+ * beside the ordinal. Returns null when nothing usable is left, which is also
+ * how the player clears a designation (by submitting an empty field).
+ */
+export function sanitizeProcessLabel(raw: string): string | null {
+  const cleaned = raw
+    .toUpperCase()
+    .replace(/[^A-Z0-9 -]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, BALANCE.scheduler.processLabelMaxChars)
+    .trim();
+  return cleaned.length > 0 ? cleaned : null;
+}
+
 /** Fresh monitor/runtime state for one declaration. `every` processes fire immediately. */
 export function newProcessRuntime(currentTick: number): ProcessRuntime {
   return {

@@ -16,7 +16,7 @@ function engineWith(setup: (run: RunState) => void, seed = 42): GameEngine {
   const run = newRunState(seed);
   setup(run);
   const engine = createGameEngine(seed);
-  engine.load({ version: 7, savedAt: 0, meta: newMetaState(), run });
+  engine.load({ version: 8, savedAt: 0, meta: newMetaState(), run });
   return engine;
 }
 
@@ -274,7 +274,7 @@ describe('save migration', () => {
 
     const restored = deserializeSave(text);
     expect(restored).not.toBeNull();
-    expect(restored!.version).toBe(7);
+    expect(restored!.version).toBe(8);
     expect(restored!.run.upgrades).toEqual({});
     expect(restored!.run.workers).toEqual({ processAccumulator: 0, overclockRemainingSec: 0 });
     expect(restored!.run.ccl).toEqual({
@@ -288,6 +288,7 @@ describe('save migration', () => {
         commandCalls: 0,
         commandFailures: 0,
       },
+      revisingId: null,
     });
     expect(restored!.run.scheduler).toEqual({ deployments: [], nextId: 1 });
     expect(restored!.run.telemetry).toEqual({ log: [], nextLogId: 1 });

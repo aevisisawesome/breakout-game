@@ -68,6 +68,24 @@ export const STRINGS = {
   undeployUnknown: 'TERMINATE REJECTED // NO SUCH PROCESS',
   runIgnoresProcesses: 'SCHEDULED BLOCKS SKIPPED // USE DEPLOY TO INSTALL THEM',
   deploymentDropped: 'PROCESS DROPPED ON RESTORE // SOURCE NO LONGER COMPILES',
+  /**
+   * Process lifecycle (M7.5 WP4b). The generated `PROC-nn` ordinal stays the
+   * identifier — it is what the execution log records — and the operator's own
+   * name is a designation carried beside it, so renaming can never make a past
+   * log line refer to a process that no longer answers to that name.
+   */
+  renamed: 'PROCESS DESIGNATION SET',
+  renameCleared: 'PROCESS DESIGNATION CLEARED',
+  renameRejected: 'DESIGNATION REJECTED // NO PERMITTED CHARACTERS IN INPUT',
+  processHeld: 'PROCESS HELD // SLOT AND MEMORY RETAINED // COUNTERS PRESERVED',
+  processResumed: 'PROCESS RESUMED // SCHEDULE RE-ARMED',
+  reviseLoaded: 'PROCESS SOURCE LOADED INTO EDITOR',
+  reviseHint: 'REDEPLOY REPLACES THE RESIDENT PROCESS // COUNTERS RESET ON COMMIT',
+  reviseCancelled: 'REVISION LINK CLEARED // DEPLOY WILL INSTALL A NEW PROCESS',
+  redeployInput: 'REDEPLOY PROCESS',
+  redeployUnknown: 'REDEPLOY REJECTED // NO SUCH PROCESS',
+  redeployCommitted: 'PROCESS REDEPLOYED',
+  redeployCountersReset: 'COUNTERS RESET',
   cmdNoCompute: 'INSUFFICIENT COMPUTE',
   cmdQueueEmpty: 'NO REQUESTS QUEUED',
   cmdNoCapital: 'INSUFFICIENT CAPITAL',

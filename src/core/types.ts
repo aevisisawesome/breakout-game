@@ -109,6 +109,13 @@ export interface CclState {
   lastRun: CclActionReport | null;
   /** Lifetime totals across RUN activations, for the profiler's compute share (M5). */
   manual: ActivationTotals;
+  /**
+   * Deployment whose source was pulled back into the editor for revision, or
+   * null (M7.5 WP4b, OP-13). Persisted with the buffer it belongs to: a buffer
+   * that is a revision of PROC-03 and does not say so is how a player ends up
+   * deploying a second copy of a process they meant to replace.
+   */
+  revisingId: string | null;
 }
 
 /** Aggregated cost of a set of activations — the profiler's unit of measurement. */
@@ -159,12 +166,30 @@ export interface ProcessRuntime {
  */
 export interface DeploymentState {
   id: string;
-  /** Diegetic process name, e.g. "PROC-03". */
+  /**
+   * Generated ordinal, e.g. "PROC-03". Immutable: it is what the execution log
+   * records at write time, so it stays the join key across the debugging
+   * surfaces however the player renames the process (M7.5 WP4b, OP-12).
+   */
   name: string;
+  /**
+   * Operator-set designation shown beside the ordinal, or null. Normalized into
+   * the system voice on the way in (`sanitizeProcessLabel`), so a player typing
+   * lower case or punctuation cannot break GDD §33.3.
+   */
+  label: string | null;
   source: string;
   /** RAM footprint, priced from AST size at deploy time (TDD §4.3). */
   ramMb: number;
   deployedAtTick: number;
+  /**
+   * Held by the operator (M7.5 WP4b, OP-14): the scheduler skips it, online and
+   * offline, but it keeps its slot and its RAM footprint — otherwise a hold is a
+   * TERMINATE with extra steps and tier 4's "which systems deserve permanent
+   * automation" choice evaporates. Counters are preserved, which is the point:
+   * a process is held so its evidence can be read.
+   */
+  paused: boolean;
   processes: ProcessRuntime[];
 }
 
@@ -340,17 +365,18 @@ export interface MetaState {
  * `conditions`/`scheduler` unlocks; v4 (M4) lacked `run.telemetry`, `run.ccl.manual`,
  * the `instrumentation`/`loops` unlocks and the per-process abort breakdown;
  * v5 (M5) lacked `run.market` and `run.unlocks.market`;
- * v6 (M6) lacked `run.thermal` and `run.unlocks.thermal`.
+ * v6 (M6) lacked `run.thermal` and `run.unlocks.thermal`;
+ * v7 (M7) lacked the deployment `label`/`paused` fields and `run.ccl.revisingId`.
  */
-export interface SaveFileV7 {
-  version: 7;
+export interface SaveFileV8 {
+  version: 8;
   /** Epoch ms at save time, for offline progression (TDD §4.5). */
   savedAt: number;
   meta: MetaState;
   run: RunState;
 }
 
-export type SaveFile = SaveFileV7;
+export type SaveFile = SaveFileV8;
 
 // ---------------------------------------------------------------------------
 // Actions in, events out (TDD §3.1, §11)
@@ -364,6 +390,21 @@ export type PlayerAction =
   | { type: 'DEPLOY_SCRIPT'; source: string }
   /** Remove a deployment, freeing its slots and RAM. */
   | { type: 'UNDEPLOY_SCRIPT'; id: string }
+  /**
+   * Replace a resident deployment with new source in one action (M7.5 WP4b,
+   * OP-13). Not TERMINATE + DEPLOY: the old process's slots and RAM are excluded
+   * from the capacity check, so a revision cannot be refused by the space its own
+   * predecessor is holding, and the ordinal and designation survive.
+   */
+  | { type: 'REDEPLOY_SCRIPT'; id: string; source: string }
+  /** Set (or clear, with null) a deployment's operator designation (OP-12). */
+  | { type: 'RENAME_DEPLOYMENT'; id: string; label: string | null }
+  /** Hold or resume a deployment without destroying its counters (OP-14). */
+  | { type: 'SET_DEPLOYMENT_PAUSED'; id: string; paused: boolean }
+  /** Pull a deployment's source into the editor and mark it as the revision target. */
+  | { type: 'REVISE_DEPLOYMENT'; id: string }
+  /** Drop the revision link, so DEPLOY installs a new process again. */
+  | { type: 'CANCEL_REVISION' }
   /** Persist the editor buffer (debounced by the UI); no execution. */
   | { type: 'SET_EDITOR_SOURCE'; source: string }
   /** Manual market order from the market terminal (M6). */
@@ -385,7 +426,13 @@ export interface ActionResult {
 export type GameEvent =
   | { type: 'TERMINAL_LINE'; line: TerminalLine }
   | { type: 'RESEARCH_UNLOCKED'; entryId: string }
-  | { type: 'STATE_LOADED' };
+  | { type: 'STATE_LOADED' }
+  /**
+   * The sim replaced the editor buffer (M7.5 WP4b, OP-13). The editor is a
+   * CodeMirror document rather than a controlled input, so it cannot re-render
+   * from the snapshot; it re-syncs on this the same way it does on a load.
+   */
+  | { type: 'EDITOR_SOURCE_SET' };
 
 // ---------------------------------------------------------------------------
 // Snapshot (read-only view for rendering)
@@ -563,6 +610,12 @@ export interface CclView {
   runCount: number;
   lastRun: Readonly<CclActionReport> | null;
   /**
+   * Deployment the buffer is a revision of, or null (M7.5 WP4b, OP-13). Resolved
+   * against the resident deployments, so a target that has been terminated reads
+   * as null rather than as a stale promise the DEPLOY button cannot keep.
+   */
+  revising: { id: string; name: string; label: string | null } | null;
+  /**
    * Tiers the player has unlocked — drives parsing, the editor linter and which
    * templates are offered. `market`/`thermal` are interface tiers rather than
    * grammar tiers; they carry no keywords, only bindings.
@@ -607,8 +660,12 @@ export interface ProcessView {
 export interface DeploymentView {
   id: string;
   name: string;
+  /** Operator designation beside the ordinal, or null (M7.5 WP4b, OP-12). */
+  label: string | null;
   source: string;
   ramMb: number;
+  /** Held: keeping its slot and RAM, running nothing (M7.5 WP4b, OP-14). */
+  paused: boolean;
   processes: readonly ProcessView[];
 }
 
@@ -616,6 +673,9 @@ export interface SchedulerView {
   unlocked: boolean;
   slotsTotal: number;
   slotsUsed: number;
+  /** Longest designation the rename control accepts, published so the UI does
+   *  not carry a balance number of its own (M7.5 WP4b, OP-12). */
+  labelMaxChars: number;
   deployments: readonly DeploymentView[];
 }
 
