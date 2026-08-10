@@ -7,6 +7,7 @@ import type { CclDiagnostic } from '../ccl/ast.ts';
 import type { CclRunStatus } from '../ccl/interpreter.ts';
 import type { MarketGoodId, MarketRegimeId } from '../content/market.ts';
 import type { NarrativeFlagId } from '../content/narrative.ts';
+import type { UpgradeCategoryId } from '../content/upgrades.ts';
 
 // ---------------------------------------------------------------------------
 // Resources (TDD §4.3)
@@ -441,6 +442,8 @@ export type GameEvent =
 export interface UpgradeView {
   id: string;
   name: string;
+  /** Section the channel is listed under (M7.5 WP5, OP-22). */
+  category: UpgradeCategoryId;
   desc: string;
   owned: number;
   maxOwned: number;

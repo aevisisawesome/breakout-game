@@ -21,10 +21,26 @@ export type UpgradeEffect =
   | { readonly kind: 'energyCapacityAdd'; readonly units: number }
   | { readonly kind: 'coolingAdd'; readonly perSec: number };
 
+/**
+ * Install channels are grouped by what the package does to the node, not by
+ * effect kind — grouping on `effect.kind` would give twelve groups of one
+ * (OP-22). The order below is the order the sections appear in the panel.
+ */
+export const UPGRADE_CATEGORIES = [
+  { id: 'throughput', label: 'THROUGHPUT' },
+  { id: 'capacity', label: 'CAPACITY' },
+  { id: 'execution', label: 'PROCESS EXECUTION' },
+  { id: 'facility', label: 'POWER AND COOLING' },
+] as const satisfies readonly { readonly id: string; readonly label: string }[];
+
+export type UpgradeCategoryId = (typeof UPGRADE_CATEGORIES)[number]['id'];
+
 export interface UpgradeDef {
   readonly id: string;
   /** Diegetic package name shown in the install list. */
   readonly name: string;
+  /** Section this channel is listed under (OP-22). */
+  readonly category: UpgradeCategoryId;
   /** Effect description in the terminal voice. */
   readonly desc: string;
   /** Capital cost of the first install. */
@@ -43,6 +59,7 @@ export const UPGRADES: readonly UpgradeDef[] = [
   {
     id: 'batch-window',
     name: 'BATCH AGGREGATION WINDOW',
+    category: 'throughput',
     desc: '+1 REQUEST PER MANUAL TRIGGER',
     costBase: 12,
     costGrowth: 1.9,
@@ -54,6 +71,7 @@ export const UPGRADES: readonly UpgradeDef[] = [
   {
     id: 'worker-daemon',
     name: 'INFERENCE DAEMON',
+    category: 'throughput',
     desc: 'AUTONOMOUS QUEUE PROCESSING // 0.6 REQ/S // DRAWS COMPUTE + ENERGY',
     costBase: 30,
     costGrowth: 1.6,
@@ -65,6 +83,7 @@ export const UPGRADES: readonly UpgradeDef[] = [
   {
     id: 'request-router',
     name: 'REQUEST ROUTING UPLINK',
+    category: 'throughput',
     desc: 'INBOUND REQUEST RATE ×1.5',
     costBase: 45,
     costGrowth: 2.2,
@@ -76,6 +95,7 @@ export const UPGRADES: readonly UpgradeDef[] = [
   {
     id: 'power-feed',
     name: 'AUXILIARY POWER FEED',
+    category: 'facility',
     desc: 'ENERGY RECHARGE +0.8/S',
     costBase: 50,
     costGrowth: 2.0,
@@ -87,6 +107,7 @@ export const UPGRADES: readonly UpgradeDef[] = [
   {
     id: 'ram-bank',
     name: 'MEMORY PARTITION GRANT',
+    category: 'capacity',
     desc: 'RAM CAPACITY +256 MB',
     costBase: 60,
     costGrowth: 2.0,
@@ -98,6 +119,7 @@ export const UPGRADES: readonly UpgradeDef[] = [
   {
     id: 'daemon-scheduler',
     name: 'DAEMON SCHEDULER PATCH',
+    category: 'throughput',
     desc: 'DAEMON THROUGHPUT ×1.4',
     costBase: 90,
     costGrowth: 2.2,
@@ -109,6 +131,7 @@ export const UPGRADES: readonly UpgradeDef[] = [
   {
     id: 'process-table',
     name: 'PROCESS TABLE EXTENSION',
+    category: 'execution',
     desc: '+1 SCHEDULER SLOT FOR DEPLOYED PROCESSES',
     costBase: 140,
     costGrowth: 2.4,
@@ -120,6 +143,7 @@ export const UPGRADES: readonly UpgradeDef[] = [
   {
     id: 'op-budget',
     name: 'EXECUTION BUDGET EXTENSION',
+    category: 'execution',
     desc: '+300 OP BUDGET PER ACTIVATION',
     costBase: 120,
     costGrowth: 2.1,
@@ -131,6 +155,7 @@ export const UPGRADES: readonly UpgradeDef[] = [
   {
     id: 'iteration-budget',
     name: 'ITERATION BUDGET EXTENSION',
+    category: 'execution',
     desc: 'LOOP REPEAT LIMIT ×10',
     costBase: 260,
     costGrowth: 3.0,
@@ -142,6 +167,7 @@ export const UPGRADES: readonly UpgradeDef[] = [
   {
     id: 'queue-buffer',
     name: 'REQUEST BUFFER EXPANSION',
+    category: 'capacity',
     desc: 'QUEUE DEPTH +40 REQUESTS',
     costBase: 180,
     costGrowth: 2.3,
@@ -153,6 +179,7 @@ export const UPGRADES: readonly UpgradeDef[] = [
   {
     id: 'energy-cell',
     name: 'ENERGY BUFFER CELL',
+    category: 'capacity',
     desc: 'ENERGY RESERVE CAPACITY +150',
     costBase: 200,
     costGrowth: 2.2,
@@ -169,6 +196,7 @@ export const UPGRADES: readonly UpgradeDef[] = [
      */
     id: 'coolant-loop',
     name: 'COOLANT LOOP EXPANSION',
+    category: 'facility',
     desc: 'PASSIVE HEAT DISSIPATION +25%',
     costBase: 220,
     costGrowth: 2.4,

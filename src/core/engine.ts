@@ -1536,6 +1536,7 @@ export function createGameEngine(seed: number): GameEngine {
         return {
           id: def.id,
           name: def.name,
+          category: def.category,
           desc: def.desc,
           owned,
           maxOwned: def.maxOwned,

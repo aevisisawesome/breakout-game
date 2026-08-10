@@ -13,6 +13,12 @@ import { useCallback, useState, type ReactNode } from 'react';
  * Collapse state is presentation, not game state, so it lives in localStorage
  * rather than in the sim (TDD §9 puts *unlock* state in the sim; this is neither
  * unlocked nor earned).
+ *
+ * The stored set holds the ids whose state **differs from that panel's default**,
+ * not the ids that are collapsed (M7.5 WP5). Every panel but one defaults to
+ * expanded, for which the two readings are identical; the exhausted-channels
+ * group defaults to collapsed (OP-22), and storing "collapsed" would have made
+ * its remembered state unrepresentable.
  */
 
 const STORAGE_KEY = 'breakout.ui.collapsed.v1';
@@ -39,7 +45,7 @@ function writeCollapsed(ids: Set<string>): void {
 }
 
 /** Shared across panels so one panel's toggle does not re-read the store for all. */
-let collapsedIds = readCollapsed();
+let flippedIds = readCollapsed();
 
 export interface PanelProps {
   /** Stable key for the persisted collapse state. */
@@ -49,25 +55,37 @@ export interface PanelProps {
   className: string;
   /** Optional header content shown beside the title (e.g. the editor's budget). */
   aside?: ReactNode;
+  /** Folded until the player opens it (the exhausted-channel group, OP-22). */
+  defaultCollapsed?: boolean;
   /** Called when the body is folded or unfolded, for panels that must re-measure. */
   onToggle?: (collapsed: boolean) => void;
   children: ReactNode;
 }
 
-export function Panel({ id, title, className, aside, onToggle, children }: PanelProps) {
-  const [collapsed, setCollapsed] = useState(() => collapsedIds.has(id));
+export function Panel({
+  id,
+  title,
+  className,
+  aside,
+  defaultCollapsed = false,
+  onToggle,
+  children,
+}: PanelProps) {
+  const [collapsed, setCollapsed] = useState(() => flippedIds.has(id) !== defaultCollapsed);
 
   const toggle = useCallback(() => {
     setCollapsed((wasCollapsed) => {
-      const next = new Set(collapsedIds);
-      if (wasCollapsed) next.delete(id);
-      else next.add(id);
-      collapsedIds = next;
+      const next = new Set(flippedIds);
+      // Storing "differs from the default" keeps a default-collapsed group's
+      // opened state representable in the same set.
+      if (wasCollapsed === defaultCollapsed) next.add(id);
+      else next.delete(id);
+      flippedIds = next;
       writeCollapsed(next);
       onToggle?.(!wasCollapsed);
       return !wasCollapsed;
     });
-  }, [id, onToggle]);
+  }, [id, defaultCollapsed, onToggle]);
 
   return (
     <section className={collapsed ? `${className} panel-collapsed` : className}>

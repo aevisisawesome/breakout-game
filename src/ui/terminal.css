@@ -52,6 +52,11 @@ button:hover {
 .terminal-screen {
   position: relative;
   height: 100%;
+  /* The shell stops growing and centres instead (M7.5 WP5, OP-24). Past this
+     the terminal column was only making prose and code lines longer, which is
+     less readable, not more. */
+  max-width: 1560px;
+  margin-inline: auto;
   display: flex;
   flex-direction: column;
   padding: 1.25rem 1.5rem;
@@ -87,7 +92,11 @@ button:hover {
 
 .screen-layout {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 300px;
+  /* The readout column takes a share of the extra width rather than none of it
+     (M7.5 WP5, OP-24): its entries are the ones that wrap — install channels,
+     process counters, the market chart. Floored at the 300 px it used to be
+     fixed at, and capped so it cannot eat a narrow desktop's terminal. */
+  grid-template-columns: minmax(0, 1fr) clamp(300px, 26%, 420px);
   gap: 1rem;
   flex: 1;
   min-height: 0;
@@ -101,6 +110,11 @@ button:hover {
      editor would widen the column instead of scrolling inside it. */
   min-width: 0;
   gap: 0.8rem;
+  /* Its own scroller, matching the side column (M7.5 WP5, OP-31). Without one,
+     expanding several panels pushed the lower ones past the bottom of a shell
+     that clips its overflow, and the document could not scroll to them either
+     because the desktop shell is locked to the viewport height. */
+  overflow-y: auto;
 }
 
 .side-column {
@@ -169,6 +183,15 @@ button:hover {
 /* Folded away, the terminal stops claiming the column's spare height. */
 .terminal-panel.panel-collapsed {
   flex: none;
+}
+
+/* A floor on the one panel that absorbs the column's squeeze (M7.5 WP5, OP-31):
+   `.terminal-panel` is the only `flex: 1` child with `min-height: 0`, so five
+   expanded panels used to leave the terminal 0 px tall with 61 lines in it. An
+   expanded panel must never render at no height; below this the column scrolls
+   instead. Not applied when folded, or the fold would still cost 10rem. */
+.terminal-panel:not(.panel-collapsed) {
+  min-height: 10rem;
 }
 
 .terminal-panel > .panel-body {
@@ -466,6 +489,37 @@ button:hover {
 
 .upgrade-list {
   list-style: none;
+}
+
+/* Sectioning (M7.5 WP5, OP-22). The category head is a label, not a fold: the
+   complaint was that unrelated channels ran together, and another twelve
+   controls is not the answer to too much to read. */
+.upgrade-section + .upgrade-section,
+.upgrade-exhausted {
+  margin-top: 0.9rem;
+}
+
+.upgrade-section-head {
+  font-size: 11px;
+  font-weight: normal;
+  letter-spacing: 0.18em;
+  border-bottom: 1px dotted var(--term-border);
+  padding-bottom: 0.2rem;
+  margin-bottom: 0.55rem;
+}
+
+/* Exhausted channels keep the record of what was bought and lose the dead
+   button: one line each, in a group folded by default. */
+.upgrade-exhausted-list {
+  list-style: none;
+}
+
+.upgrade-exhausted-entry {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.6rem;
+  font-size: 11.5px;
+  padding: 0.1rem 0;
 }
 
 .upgrade-entry {
