@@ -1,16 +1,18 @@
 /**
- * Trailing-window rate meters for the resource readouts (M7.5 WP3, OP-21).
+ * Trailing-window rate meters for the resource readouts (M7.5 WP3, OP-21;
+ * WP7, OP-35).
  *
- * Some of what a pool does per second is *modelled* — daemon income and the
- * energy balance are steady expected rates the sim already knows, and quoting
- * them keeps the readout still while daemons land jobs in lumps. The rest can
- * only be *measured*: script execution draws fuel whenever a process happens to
- * activate, and core temperature has no expected rate at all, only a derivative
- * that swings hard on the tick a batch of work lands.
+ * Every displayed rate is now *measured* rather than modelled: what the pool's
+ * own `current` did, and what the core's temperature did, over the interval just
+ * passed. A modelled rate can only quote the flows the model knows about, and
+ * WP7 exists because the ones it did not know about — a script's market fills,
+ * the player's own orders, an income term that collapses when the queue empties
+ * — were enough to make the number contradict the meter beside it.
  *
- * A measured number therefore needs a window, or the readout jitters ten times
- * a second and says nothing. This is that window: a fixed-length ring of
- * per-step amounts and the seconds they covered, reported as a mean.
+ * A measured number needs a window, or the readout jitters ten times a second
+ * and says nothing: daemons land jobs in lumps and a fill lands all at once.
+ * This is that window: a fixed-length ring of per-step amounts and the seconds
+ * they covered, reported as a mean.
  *
  * Deliberately **not persisted** (TDD §8). It is a display aid holding at most a
  * couple of seconds of history; a fresh window refills within its own length,

@@ -1,12 +1,15 @@
 /**
- * M7.5 WP3 tests: the signed rate readouts (OP-21) and the trailing window
- * behind the measured half of them.
+ * M7.5 WP3 and WP7 tests: the signed rate readouts (OP-21, OP-35) and the
+ * trailing window behind them.
  *
  * The claim being pinned is narrow and worth stating: a rate shown beside a
- * meter must agree with the meter. Before WP3, `compute.ratePerSec` quoted
- * daemon income only while script fuel came out of the same pool, and
- * `temperature.ratePerSec` was measured from *after* the step's heat had landed,
- * so it could report cooling and nothing else.
+ * meter must agree with the meter. WP3 got two thirds of the way there — script
+ * fuel was subtracted from a compute rate that had ignored it, and
+ * `temperature.ratePerSec` stopped being measured from *after* the step's heat
+ * had landed, which was the only reason it could report cooling and nothing
+ * else. WP7 finishes it: compute and energy quote the pool's own d/dt, so the
+ * flows no model was watching — market fills, manual batches, an income term
+ * that collapses when the queue empties — are in the number by construction.
  */
 
 import { describe, expect, it } from 'vitest';
@@ -23,6 +26,18 @@ function engineWith(setup: (run: RunState) => void, seed = 42): GameEngine {
   const engine = createGameEngine(seed);
   engine.load({ version: 8, savedAt: 0, meta: newMetaState(), run });
   return engine;
+}
+
+const WINDOW_SEC = BALANCE.readouts.rateWindowSec;
+const WINDOW_MS = WINDOW_SEC * 1000;
+
+/**
+ * Once the ring is full it holds exactly the last `WINDOW_SEC` of steps, so the
+ * quoted rate is `(current − current one window ago) / WINDOW_SEC` — which is
+ * the whole of WP7's claim, expressed as arithmetic.
+ */
+function ticksToFillWindow(engine: GameEngine): void {
+  engine.tick(WINDOW_MS + 1000);
 }
 
 /** A funded, fully granted sandbox with daemons running. */
@@ -73,10 +88,9 @@ describe('RateWindow', () => {
 });
 
 describe('resource rates (OP-21)', () => {
-  it('subtracts script fuel from the compute rate, so the readout agrees with the meter', () => {
+  it('quotes the compute pool itself, script fuel and all', () => {
     const engine = engineWith(builtOut);
-    engine.tick(2000);
-    const idle = engine.getSnapshot().resources.compute.ratePerSec;
+    ticksToFillWindow(engine);
     const before = engine.getSnapshot().resources.compute.current;
 
     // A process that burns fuel every activation and produces no compute.
@@ -86,31 +100,32 @@ describe('resource rates (OP-21)', () => {
         source: 'every 1 seconds {\n  x = 1 + 2 + 3 + 4 + 5\n}\n',
       }).ok,
     ).toBe(true);
-    engine.tick(2000);
+    engine.tick(WINDOW_MS);
 
     const snap = engine.getSnapshot();
     const drawn = snap.scheduler.deployments
       .flatMap((d) => d.processes)
       .reduce((total, p) => total + p.computeTotal, 0);
     expect(drawn).toBeGreaterThan(0);
-    // The whole of the drop is the script, and nothing but the script.
-    expect(idle - snap.resources.compute.ratePerSec).toBeCloseTo(drawn / 2, 6);
-    // ...and the result tracks what the pool actually did. Loose by design: the
-    // daemon half is a modelled steady rate and daemons land jobs in lumps, so
-    // it leads or lags the pool by a fraction of a job over any short window.
-    const measured = (snap.resources.compute.current - before) / 2;
-    expect(Math.abs(snap.resources.compute.ratePerSec - measured)).toBeLessThan(0.1);
+    // Exactly, not loosely: WP3 could only claim the readout tracked the pool to
+    // within a fraction of a job, because its daemon half was a modelled steady
+    // rate and daemons land work in lumps. WP7's number *is* the pool.
+    expect(snap.resources.compute.ratePerSec).toBeCloseTo(
+      (snap.resources.compute.current - before) / WINDOW_SEC,
+      8,
+    );
   });
 
-  it('subtracts script draw from the energy balance too', () => {
+  it('quotes the energy reserve itself, script draw and all', () => {
     const engine = engineWith((run) => {
       builtOut(run);
       run.jobs.waiting = 0; // no daemon work, so only the script moves the reserve
       run.upgrades['worker-daemon'] = 0;
+      run.resources.energy.current = 50; // off the ceiling, so the recharge shows
     });
-    engine.tick(2000);
+    ticksToFillWindow(engine);
     const idle = engine.getSnapshot().resources.energy.ratePerSec;
-    expect(idle).toBeCloseTo(BALANCE.resources.energyRegenPerSec, 10);
+    expect(idle).toBeCloseTo(BALANCE.resources.energyRegenPerSec, 6);
 
     expect(
       engine.dispatch({
@@ -118,8 +133,14 @@ describe('resource rates (OP-21)', () => {
         source: 'every 1 seconds {\n  x = 1 + 2 + 3 + 4 + 5\n}\n',
       }).ok,
     ).toBe(true);
-    engine.tick(2000);
-    expect(engine.getSnapshot().resources.energy.ratePerSec).toBeLessThan(idle);
+    const before = engine.getSnapshot().resources.energy.current;
+    engine.tick(WINDOW_MS);
+    const snap = engine.getSnapshot();
+    expect(snap.resources.energy.ratePerSec).toBeLessThan(idle);
+    expect(snap.resources.energy.ratePerSec).toBeCloseTo(
+      (snap.resources.energy.current - before) / WINDOW_SEC,
+      8,
+    );
   });
 
   it('reports a rising core as rising', () => {
@@ -190,5 +211,109 @@ describe('resource rates (OP-21)', () => {
       (fresh.getSnapshot().resources.temperature.current - save.run.resources.temperature.current) *
       TICKS_PER_SEC;
     expect(rate).toBeCloseTo(oneStep, 6);
+  });
+});
+
+/**
+ * WP7: the pool rate is the pool's derivative, so it cannot contradict the bar
+ * above it. Each test here is one of the three flows OP-35 names as invisible to
+ * the modelled version, plus the two cases where "agrees with the meter" means
+ * reading flat rather than reading a number.
+ */
+describe('pool rates are the pool (OP-35)', () => {
+  it('reports a rising pool as rising while a process buys into it', () => {
+    // The reported failure, reproduced. The queue is empty and there are no
+    // daemons, so the modelled income term is zero and the old rate was script
+    // fuel and nothing else — strictly negative — while the pool climbed 20/s.
+    const engine = engineWith((run) => {
+      builtOut(run);
+      run.jobs.waiting = 0;
+      run.upgrades['worker-daemon'] = 0;
+      run.resources.compute.current = 50;
+    });
+    expect(
+      engine.dispatch({
+        type: 'DEPLOY_SCRIPT',
+        source: 'every 1 seconds {\n  buy_compute(20)\n}\n',
+      }).ok,
+    ).toBe(true);
+    ticksToFillWindow(engine);
+
+    const before = engine.getSnapshot().resources.compute.current;
+    engine.tick(WINDOW_MS);
+    const snap = engine.getSnapshot();
+    const measured = snap.resources.compute.current - before;
+    expect(measured).toBeGreaterThan(0); // the bar rose...
+    expect(snap.resources.compute.ratePerSec).toBeGreaterThan(0); // ...and so did the number
+    expect(snap.resources.compute.ratePerSec).toBeCloseTo(measured / WINDOW_SEC, 8);
+  });
+
+  it('counts a manual batch dispatched between two ticks', () => {
+    // The anchor is the pool as it stood at the last reading, not at the top of
+    // this step, so a click landing between ticks is inside the interval rather
+    // than between two of them.
+    const engine = engineWith((run) => {
+      builtOut(run);
+      run.upgrades['worker-daemon'] = 0; // only the trigger moves the pool
+      run.resources.compute.current = 50;
+    });
+    ticksToFillWindow(engine);
+    expect(engine.getSnapshot().resources.compute.ratePerSec).toBe(0);
+
+    const before = engine.getSnapshot().resources.compute.current;
+    expect(engine.dispatch({ type: 'EXECUTE_CLICK' }).ok).toBe(true);
+    engine.tick(100);
+    const snap = engine.getSnapshot();
+    const gained = snap.resources.compute.current - before;
+    expect(gained).toBeGreaterThan(0);
+    expect(snap.resources.compute.ratePerSec).toBeCloseTo(gained / WINDOW_SEC, 8);
+  });
+
+  it('reads flat at capacity, because the meter is flat', () => {
+    // Production continues; the pool does not. Quoting the production would be
+    // the OP-35 failure with the sign reversed — a positive rate on a still bar.
+    const engine = engineWith((run) => {
+      builtOut(run);
+      run.resources.compute.current = BALANCE.resources.computeCapacity;
+    });
+    ticksToFillWindow(engine);
+    const snap = engine.getSnapshot();
+    expect(snap.jobs.lifetimeProcessed).toBeGreaterThan(BALANCE.ccl.thermalUnlockAtJobs);
+    expect(snap.resources.compute.current).toBe(snap.resources.compute.capacity);
+    expect(snap.resources.compute.ratePerSec).toBe(0);
+  });
+
+  it('does not report the save it just loaded as a second of flow', () => {
+    const engine = engineWith((run) => {
+      builtOut(run);
+      run.resources.compute.current = 380;
+    });
+    engine.tick(100);
+    const save = engine.save(0);
+    const atSave = save.run.resources.compute.current;
+
+    const fresh = createGameEngine(1);
+    fresh.load(save); // a fresh engine's pool is nowhere near 380
+    fresh.tick(100);
+    const snap = fresh.getSnapshot();
+    expect(snap.resources.compute.ratePerSec).toBeCloseTo(
+      (snap.resources.compute.current - atSave) * TICKS_PER_SEC,
+      6,
+    );
+  });
+
+  it('does not report an offline catch-up as flow', () => {
+    const engine = engineWith((run) => {
+      builtOut(run);
+      run.resources.energy.current = 10;
+    });
+    engine.tick(1000);
+    engine.advanceOffline(60 * 60 * 1000); // an hour's recharge lands in one jump
+    engine.tick(100);
+    // One step of the reserve's own movement is the ceiling; the jump itself,
+    // quoted over a single step, would be hundreds per second.
+    expect(Math.abs(engine.getSnapshot().resources.energy.ratePerSec)).toBeLessThanOrEqual(
+      BALANCE.resources.energyRegenPerSec + 1e-9,
+    );
   });
 });

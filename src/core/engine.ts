@@ -205,27 +205,33 @@ export function createGameEngine(seed: number): GameEngine {
   let compiled = new Map<string, readonly ScheduledProcess[]>();
 
   /**
-   * Measured flows behind the signed rate readouts (M7.5 WP3, OP-21). Never
-   * persisted: a couple of seconds of display history, refilled within its own
-   * window, and meaningless across a load or an offline catch-up.
+   * Measured flows behind the signed rate readouts (M7.5 WP3, OP-21; reshaped by
+   * WP7, OP-35). Never persisted: a couple of seconds of display history,
+   * refilled within its own window, and meaningless across a load or an offline
+   * catch-up.
    *
-   * `stepScriptCompute` / `stepScriptEnergy` are what the interpreter drew from
-   * the pools during the step currently being simulated; the windows hold the
-   * trailing average the readout quotes.
+   * Each window holds the *observed* movement of the thing it describes — the
+   * pool's own `current` for compute and energy, the core's °C for temperature —
+   * so the quoted rate is a derivative of the number the meter draws and cannot
+   * disagree with it. The `…AtLastReading` anchors are where each pool stood the
+   * last time a rate was written, which is what makes the interval cover
+   * transactions that landed *between* ticks as well as inside one.
    */
   const rateSlots = Math.max(1, Math.round(BALANCE.readouts.rateWindowSec * TICKS_PER_SEC));
-  const computeDrawWindow = new RateWindow(rateSlots);
-  const energyDrawWindow = new RateWindow(rateSlots);
+  const computeFlowWindow = new RateWindow(rateSlots);
+  const energyFlowWindow = new RateWindow(rateSlots);
   const temperatureWindow = new RateWindow(rateSlots);
-  let stepScriptCompute = 0;
-  let stepScriptEnergy = 0;
+  let computeAtLastReading = run.resources.compute.current;
+  let energyAtLastReading = run.resources.energy.current;
 
   function resetRateWindows(): void {
-    computeDrawWindow.reset();
-    energyDrawWindow.reset();
+    computeFlowWindow.reset();
+    energyFlowWindow.reset();
     temperatureWindow.reset();
-    stepScriptCompute = 0;
-    stepScriptEnergy = 0;
+    // Re-anchor on the pools as they now stand, or the first step after a load
+    // or a catch-up would report the whole jump as one step of flow.
+    computeAtLastReading = run.resources.compute.current;
+    energyAtLastReading = run.resources.energy.current;
   }
 
   const listeners = new Set<(events: GameEvent[]) => void>();
@@ -494,10 +500,6 @@ export function createGameEngine(seed: number): GameEngine {
         if (compute.current < amount) return false;
         compute.current -= amount;
         computeSpent += amount;
-        // Same draw, counted for the signed COMPUTE readout (M7.5 WP3, OP-21):
-        // without it the rate would quote daemon income alone and disagree with
-        // the meter beside it whenever a process was running.
-        stepScriptCompute += amount;
         return true;
       },
     };
@@ -509,11 +511,7 @@ export function createGameEngine(seed: number): GameEngine {
         // draws power. Energy never blocks a script — an empty reserve throttles
         // the daemons instead, which is the visible, recoverable consequence.
         const energy = run.resources.energy;
-        const beforeEnergy = energy.current;
         energy.current = Math.max(0, energy.current - n * energyPerOp);
-        // Measured, not requested: an empty reserve absorbs less than was asked
-        // for, and the readout must match what actually left the pool.
-        stepScriptEnergy += beforeEnergy - energy.current;
         // ...and it makes heat (M7, GDD §2.4): a wasteful loop is not just slow,
         // it warms the core it is running on.
         addHeat(heatOfOps(n));
@@ -771,11 +769,10 @@ export function createGameEngine(seed: number): GameEngine {
     run.tick += 1;
     const dtSec = TICK_MS / 1000;
     // Measured-flow accounting for the rate readouts (M7.5 WP3): opened before
-    // anything in the step can add heat or draw fuel, closed where the rates are
-    // written at the end of it.
+    // anything in the step can add heat, closed where the rates are written at
+    // the end of it. The pools need no equivalent — their anchors persist across
+    // the tick boundary on purpose (WP7, OP-35).
     const temperatureAtStepStart = run.resources.temperature.current;
-    stepScriptCompute = 0;
-    stepScriptEnergy = 0;
     const derived = computeDerived(run.upgrades, run.jobs.lifetimeProcessed);
     const w = BALANCE.workers;
     const thermal = run.thermal;
@@ -873,22 +870,33 @@ export function createGameEngine(seed: number): GameEngine {
 
     applyPoolCapacities(derived);
 
-    // Display rates (M7.5 WP3, OP-21). Two kinds of number, deliberately mixed:
-    //  - *modelled*, for flows the sim already knows as steady rates — daemon
-    //    income, the energy balance — because quoting the expectation keeps the
-    //    readout still while daemons land jobs in lumps;
-    //  - *measured* over a trailing window, for what can only be observed: the
-    //    fuel scripts happen to draw, and the core's actual °C/s.
-    // Discrete transactions stay out of both. A click's batch and a market order
-    // are events, not flow, and a rate that spiked on each would be unreadable
-    // exactly when a player is trying to read it.
-    const netComputePerJob = BALANCE.jobs.computePerJob - w.computeOverheadPerJob;
+    // Display rates (M7.5 WP7, OP-35 — this supersedes WP3's part-modelled shape).
+    //
+    // COMPUTE and ENERGY quote the pool's **measured d/dt**: how far `current`
+    // has actually moved since the last reading, averaged over the trailing
+    // window. Every flow is therefore in it, including the three a modelled rate
+    // could not see — script purchases and sells, the player's own market orders
+    // and manual batches, and the income term collapsing to zero whenever the
+    // queue empties or the watchdog halts the node. A number derived from a model
+    // of the flows can contradict the meter above it (OP-35: `-12.77/s` beside a
+    // rising bar); a derivative of the number the meter draws cannot.
+    //
+    // Sampled *here* rather than against a value taken at the top of the step, so
+    // that transactions landing between two ticks fall inside an interval instead
+    // of between two of them. A clamp at capacity or at zero is part of the
+    // movement for the same reason: the bar did not move, so neither does the rate.
+    //
+    // CAPITAL keeps its modelled daemon-income rate. It is rendered nowhere, and
+    // what belongs in a CR/s is a different question (OP-33, M8) — surfacing this
+    // one unchanged is the mistake that row exists to prevent.
     const displayRate = working ? effectiveRate : 0;
-    computeDrawWindow.push(stepScriptCompute, dtSec);
-    energyDrawWindow.push(stepScriptEnergy, dtSec);
-    compute.ratePerSec = displayRate * netComputePerJob - computeDrawWindow.perSec();
+    computeFlowWindow.push(compute.current - computeAtLastReading, dtSec);
+    energyFlowWindow.push(energy.current - energyAtLastReading, dtSec);
+    computeAtLastReading = compute.current;
+    energyAtLastReading = energy.current;
+    compute.ratePerSec = computeFlowWindow.perSec();
+    energy.ratePerSec = energyFlowWindow.perSec();
     run.resources.capital.ratePerSec = displayRate * BALANCE.jobs.capitalPerJob;
-    energy.ratePerSec = derived.energyRegenPerSec - drainPerSec - energyDrawWindow.perSec();
 
     // Heat was added at the point of work; dissipation is applied once per tick.
     const temperature = run.resources.temperature;
@@ -1756,12 +1764,15 @@ export function createGameEngine(seed: number): GameEngine {
       run = structuredClone(save.run);
       accumulatorMs = 0;
       pendingProgram = null; // in-flight activations are dropped on load (TDD §8)
-      resetRateWindows(); // measured display rates belong to the session, not the file
       // Deployed scripts are stored as source and recompiled here; a script whose
       // source no longer compiles is dropped rather than silently doing nothing.
       recompileDeployments();
       // Re-derive install-driven pools: content values may have changed between sessions.
       applyPoolCapacities(computeDerived(run.upgrades, run.jobs.lifetimeProcessed));
+      // Measured display rates belong to the session, not to the file — and this
+      // re-anchors them *after* the capacity re-derive above, so a reserve clamped
+      // by a content change is not reported as a second of flow (M7.5 WP7).
+      resetRateWindows();
       pushTerminal(run, 'system', STRINGS.saveLoaded);
       markDirty();
       emit({ type: 'STATE_LOADED' });

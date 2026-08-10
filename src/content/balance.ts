@@ -264,13 +264,18 @@ export const BALANCE = {
     failureRatioWarn: 0.3,
   },
 
-  /** Resource readouts (M7.5 WP3, OP-19/OP-21). */
+  /** Resource readouts (M7.5 WP3, OP-19/OP-21; WP7, OP-35). */
   readouts: {
     /**
      * Trailing window, in seconds, over which measured flows are averaged for
-     * display: script fuel draw and the core's °C/s. Long enough that one lumpy
-     * tick does not swing the number, short enough that the reading still
-     * answers "am I winning *now*" inside a demand window.
+     * display: the compute and energy pools' own d/dt, and the core's °C/s. Long
+     * enough that one lumpy tick does not swing the number, short enough that the
+     * reading still answers "am I winning *now*" inside a demand window.
+     *
+     * It is also what makes a discrete fill readable: a `buy_energy(40)` enters
+     * the window as +20/S and leaves it two seconds later, rather than showing as
+     * a single unreadable spike or — as before WP7 — not showing at all while the
+     * meter beside it jumped.
      */
     rateWindowSec: 2,
   },
