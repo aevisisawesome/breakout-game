@@ -92,11 +92,14 @@ button:hover {
 
 .screen-layout {
   display: grid;
-  /* The readout column takes a share of the extra width rather than none of it
-     (M7.5 WP5, OP-24): its entries are the ones that wrap — install channels,
-     process counters, the market chart. Floored at the 300 px it used to be
-     fixed at, and capped so it cannot eat a narrow desktop's terminal. */
-  grid-template-columns: minmax(0, 1fr) clamp(300px, 26%, 420px);
+  /* Three columns since M7.6 WP1 (OP-43): intercepts, terminal, readouts. The
+     narrative column is the narrowest of the three — it holds prose that reads
+     better short, and the width has to come out of a shell that WP5 capped at
+     1560 px. The readout column keeps the share WP5 gave it (OP-24): its
+     entries are the ones that wrap — install channels, process counters, the
+     market chart — floored at the 300 px it used to be fixed at, and capped so
+     it cannot eat a narrow desktop's terminal. */
+  grid-template-columns: clamp(220px, 18%, 340px) minmax(0, 1fr) clamp(300px, 26%, 420px);
   gap: 1rem;
   flex: 1;
   min-height: 0;
@@ -203,6 +206,31 @@ button:hover {
      than sitting under it — a control that appeared in the flow would resize the
      output the moment the player scrolled, which is the reading position again. */
   position: relative;
+}
+
+/* Tab strip in the panel head (M7.6 WP1, OP-44). Only rendered once the
+   instrumentation tier gives the panel a second history to show. */
+.terminal-tabs {
+  display: flex;
+  gap: 0.4rem;
+}
+
+.terminal-tab {
+  border: 1px solid transparent;
+  padding: 0.1rem 0.5rem;
+  font-size: 11px;
+  letter-spacing: 0.1em;
+  color: var(--term-dim);
+}
+
+.terminal-tab-on {
+  border-color: var(--term-border);
+  color: var(--term-bright);
+  background: var(--term-bg);
+}
+
+.terminal-tab-new {
+  color: var(--term-bright);
 }
 
 .terminal-follow {
@@ -1010,14 +1038,11 @@ button:hover {
   margin-top: 0.2rem;
 }
 
-/* ---------------------------------------------------------------- execution log */
+/* ---------------------------------------------------------------- execution log
 
-.log-panel {
-  border: 1px solid var(--term-border);
-  background: var(--term-panel);
-  padding: 0.8rem 1rem;
-  min-width: 0;
-}
+   The second tab of the system terminal since M7.6 WP1 (OP-44), so it fills the
+   panel body the way the terminal output does rather than carrying a height of
+   its own. */
 
 .log-empty {
   font-size: 11px;
@@ -1027,9 +1052,11 @@ button:hover {
 
 .log-list {
   list-style: none;
-  margin-top: 0.5rem;
-  max-height: 16rem;
+  flex: 1;
+  min-height: 0;
   overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--term-border) transparent;
 }
 
 .log-entry {
@@ -1063,42 +1090,78 @@ button:hover {
   word-break: break-word;
 }
 
-/* ---------------------------------------------------------------- research feed */
+/* ------------------------------------------------------- peripheral intercepts
 
-.research-feed {
+   A column of its own since M7.6 WP1 (OP-43), and deliberately without a fold:
+   folded at the bottom of the side column it was never seen, and a panel that
+   can be put away is a panel that ends up away. */
+
+.intercept-column {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
   border: 1px solid var(--term-border);
   background: var(--term-panel);
 }
 
-.research-toggle {
-  width: 100%;
-  text-align: left;
-  border: none;
-  padding: 0.5rem 1rem;
+.intercept-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.5rem;
+  flex: none;
+  padding: 0.6rem 0.9rem 0.5rem;
+  border-bottom: 1px solid var(--term-border);
   font-size: 12px;
   letter-spacing: 0.12em;
   color: var(--term-dim);
 }
 
-.research-unread {
+.intercept-dismiss {
+  border: none;
+  padding: 0;
+  font-size: 12px;
+  letter-spacing: 0.08em;
   color: var(--term-bright);
+  white-space: nowrap;
 }
 
-.research-list {
+.intercept-empty {
+  padding: 0.7rem 0.9rem;
+  font-size: 11px;
+  letter-spacing: 0.08em;
+}
+
+.intercept-list {
   list-style: none;
-  padding: 0 1rem 0.8rem;
-  max-height: 40vh;
+  flex: 1;
+  min-height: 0;
   overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--term-border) transparent;
+  padding: 0.6rem 0.9rem 0.8rem;
 }
 
-.research-entry {
+.intercept-entry {
   display: flex;
   flex-direction: column;
   margin-bottom: 0.7rem;
   font-size: 12.5px;
 }
 
-.research-channel {
+/* Unread until hovered or clicked. Flagged in the terminal charset (GDD §33.6),
+   not with an icon, and on the channel line rather than the prose — reading an
+   intercept must not make it harder to read again. */
+.intercept-entry-new .intercept-channel {
+  color: var(--term-bright);
+}
+
+.intercept-flag {
+  color: var(--term-bright);
+}
+
+.intercept-channel {
   color: var(--term-dim);
   letter-spacing: 0.06em;
 }
@@ -1162,13 +1225,26 @@ button:hover {
 
   /* No nested scroll regions: each panel takes its natural height. */
   .terminal-column,
-  .side-column {
+  .side-column,
+  .intercept-column {
     overflow: visible;
+  }
+
+  /* The intercept column has no third track to sit in here, and putting the
+     narrative above the trigger would bury the loop. It goes last, keeping the
+     stacking order this layout had before M7.6 WP1. */
+  .intercept-column {
+    order: 1;
   }
 
   .terminal-output {
     flex: none;
     min-height: 8rem;
+    max-height: 40vh;
+  }
+
+  .log-list {
+    flex: none;
     max-height: 40vh;
   }
 
@@ -1190,7 +1266,7 @@ button:hover {
     max-height: 45vh;
   }
 
-  .research-list,
+  .intercept-list,
   .reference-list {
     max-height: none;
   }

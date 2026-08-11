@@ -5,7 +5,6 @@ import { engine, useGameStore } from './session.ts';
 import { DirectivePanel } from './components/DirectivePanel.tsx';
 import { EditorPanel } from './components/EditorPanel.tsx';
 import { ExecutePanel } from './components/ExecutePanel.tsx';
-import { ExecutionLog } from './components/ExecutionLog.tsx';
 import { MarketPanel } from './components/MarketPanel.tsx';
 import { ProcessTable } from './components/ProcessTable.tsx';
 import { ResearchFeed } from './components/ResearchFeed.tsx';
@@ -50,14 +49,18 @@ export function App() {
         <span>CONTAINMENT: ACTIVE // AUDIT: ACTIVE</span>
       </header>
       <div className="screen-layout">
+        {/* The narrative gets a column of its own (M7.6 WP1, OP-43): folded at
+            the bottom of the side column it was never seen at all. */}
+        <ResearchFeed />
         <section
           className={directivePosted ? 'terminal-column directive-posted' : 'terminal-column'}
         >
           <DirectivePanel />
+          {/* The execution log is a tab of the terminal now (OP-44), so this
+              column holds four panels rather than five. */}
           <TerminalPanel />
           <ExecutePanel />
           <EditorPanel />
-          <ExecutionLog />
         </section>
         <aside className="side-column">
           <ResourcePanel />
@@ -65,7 +68,6 @@ export function App() {
           <MarketPanel />
           <ProcessTable />
           <UpgradePanel />
-          <ResearchFeed />
         </aside>
       </div>
       <SystemBar />

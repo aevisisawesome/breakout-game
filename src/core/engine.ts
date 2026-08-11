@@ -1724,8 +1724,11 @@ export function createGameEngine(seed: number): GameEngine {
         },
         telemetry: {
           unlocked: run.unlocks.instrumentation,
-          // Newest first: the panel is read from the top.
-          log: [...run.telemetry.log].reverse(),
+          // Oldest first, matching the terminal (M7.6 WP1, OP-44). The log is a
+          // tab of the system terminal now, and two histories side by side
+          // cannot disagree about which way time runs; the reading position is
+          // held at the tail by the UI, as it already was for the terminal.
+          log: [...run.telemetry.log],
           profile,
           scriptComputeTotal,
         },

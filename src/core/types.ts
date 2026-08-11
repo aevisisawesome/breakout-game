@@ -713,7 +713,7 @@ export interface ProfileEntryView {
 
 export interface TelemetryView {
   unlocked: boolean;
-  /** Execution log, newest first. */
+  /** Execution log, oldest first — the terminal's direction (M7.6 WP1, OP-44). */
   log: readonly ExecLogEntry[];
   profile: readonly ProfileEntryView[];
   /** Denominator behind `computeShare` — all script compute spent this run. */

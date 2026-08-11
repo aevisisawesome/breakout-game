@@ -1,5 +1,7 @@
 import { useGameStore } from '../session.ts';
-import { Panel } from './Panel.tsx';
+import { useFollowTail } from '../follow-tail.ts';
+import { newestId } from '../unread.ts';
+import { FollowTailButton } from './FollowTailButton.tsx';
 import { TICKS_PER_SEC } from '../../core/engine.ts';
 import type { ExecLogEntry } from '../../core/types.ts';
 
@@ -30,35 +32,41 @@ function outcome(entry: ExecLogEntry): string {
 }
 
 /**
- * Execution log (M5, TDD §5.4): the ring buffer of script activations, newest
- * first. Deployed processes are quiet in the terminal by design (they would
- * flood it), so this is where their per-activation detail lives.
+ * Execution log (M5, TDD §5.4): the ring buffer of script activations. Deployed
+ * processes are quiet in the terminal by design (they would flood it), so this
+ * is where their per-activation detail lives.
+ *
+ * Since M7.6 WP1 it is the second tab of the system terminal rather than a
+ * panel of its own (OP-44), and it reads **oldest-first, following the tail**
+ * like the terminal beside it — the two tabs had to agree about direction, and
+ * the terminal's is the one that matches how the histories are written.
  */
 export function ExecutionLog() {
-  const telemetry = useGameStore((s) => s.snapshot.telemetry);
-  if (!telemetry.unlocked) return null;
+  const log = useGameStore((s) => s.snapshot.telemetry.log);
+  const follow = useFollowTail<HTMLOListElement>(newestId(log.map((entry) => entry.id)));
+
+  if (log.length === 0) {
+    return <p className="terminal-dim log-empty">NO ACTIVATIONS RECORDED.</p>;
+  }
 
   return (
-    <Panel id="execlog" title="EXECUTION LOG" className="log-panel">
-      {telemetry.log.length === 0 ? (
-        <p className="terminal-dim log-empty">NO ACTIVATIONS RECORDED.</p>
-      ) : (
-        <ol className="log-list">
-          {telemetry.log.map((entry) => (
-            <li
-              key={entry.id}
-              className={entry.status === 'ok' ? 'log-entry' : 'log-entry log-entry-bad'}
-            >
-              <span className="terminal-dim log-time">{timestamp(entry.tick)}</span>
-              <span className="log-source">
-                {entry.process === '' ? entry.label : `${entry.process} ${entry.label}`}
-                {entry.kind === 'guard' && ' [GUARD]'}
-              </span>
-              <span className="log-outcome terminal-dim">{outcome(entry)}</span>
-            </li>
-          ))}
-        </ol>
-      )}
-    </Panel>
+    <>
+      <ol className="log-list" ref={follow.scrollRef} onScroll={follow.onScroll}>
+        {log.map((entry) => (
+          <li
+            key={entry.id}
+            className={entry.status === 'ok' ? 'log-entry' : 'log-entry log-entry-bad'}
+          >
+            <span className="terminal-dim log-time">{timestamp(entry.tick)}</span>
+            <span className="log-source">
+              {entry.process === '' ? entry.label : `${entry.process} ${entry.label}`}
+              {entry.kind === 'guard' && ' [GUARD]'}
+            </span>
+            <span className="log-outcome terminal-dim">{outcome(entry)}</span>
+          </li>
+        ))}
+      </ol>
+      {follow.detached && <FollowTailButton pending={follow.pending} onClick={follow.toBottom} />}
+    </>
   );
 }

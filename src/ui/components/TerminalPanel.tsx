@@ -1,57 +1,70 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 
 import { useGameStore } from '../session.ts';
+import { useFollowTail } from '../follow-tail.ts';
+import { countNewer, newestId } from '../unread.ts';
+import { ExecutionLog } from './ExecutionLog.tsx';
+import { FollowTailButton } from './FollowTailButton.tsx';
 import { Panel } from './Panel.tsx';
 
 /**
- * How close to the last line still counts as "following". One line of slack, so
- * a fractional scroll position or a rounded scrollHeight cannot silently detach
- * a player who never scrolled.
+ * Which history the panel is showing (M7.6 WP1, OP-44). The execution log used
+ * to be a sixth panel stacked below this one; it is a tab now, because the two
+ * are the same kind of thing — an append-only record of what happened, one
+ * written by the node and one by the interpreter — and the reader is nearly
+ * always asking the same question of one or the other. It also returns the
+ * vertical space that made OP-31 possible in the first place.
  */
-const FOLLOW_SLACK_PX = 24;
+type TerminalTab = 'output' | 'execlog';
 
 export function TerminalPanel() {
   const terminal = useGameStore((s) => s.snapshot.terminal);
-  const scrollRef = useRef<HTMLDivElement>(null);
-  /**
-   * Following the newest line, as opposed to reading back through the history.
-   * A ref, not state: the scroll handler and the output effect both need the
-   * current value without re-rendering the whole log to get it.
-   */
-  const following = useRef(true);
-  const [detachedFrom, setDetachedFrom] = useState<number | null>(null);
+  const telemetry = useGameStore((s) => s.snapshot.telemetry);
+  const [tab, setTab] = useState<TerminalTab>('output');
 
-  const toBottom = useCallback(() => {
-    const el = scrollRef.current;
-    if (el) el.scrollTop = el.scrollHeight;
-    following.current = true;
-    setDetachedFrom(null);
-  }, []);
+  // Before the instrumentation tier there is only one history, so the panel
+  // renders exactly as it did: no tab strip, no second view to be lost in.
+  const tabbed = telemetry.unlocked;
+  const active: TerminalTab = tabbed ? tab : 'output';
+
+  const newestLogId = newestId(telemetry.log.map((entry) => entry.id));
+  const newestLineId = terminal.length > 0 ? terminal[terminal.length - 1]!.id : -1;
 
   /**
-   * The newest line's id, which changes only when something is actually written
-   * (OP-27). The `terminal` array itself is rebuilt by `getSnapshot()` on every
-   * revision, and the store swaps in a new snapshot at the 10 Hz timestep — so
-   * depending on the array meant re-running this ten times a second, which is
-   * what made the panel impossible to scroll back through.
+   * Newest entry in each history that the player has actually had on screen.
+   * Seeded from the live buffers rather than from -1, so a returning player is
+   * not told that fifty entries written before they closed the tab are new.
+   *
+   * Both tabs carry a count, not just the log: a tab that is off screen cannot
+   * show that something arrived in it, which is precisely the failure OP-43
+   * describes for the intercepts, and recreating it here in a new place is the
+   * thing OP-44 warns against. The node's own advisories are the half a player
+   * can least afford to miss.
    */
-  const newestId = terminal.length > 0 ? terminal[terminal.length - 1]!.id : -1;
-
+  const [seenLogId, setSeenLogId] = useState(newestLogId);
+  const [seenLineId, setSeenLineId] = useState(newestLineId);
   useEffect(() => {
-    // Stick to the bottom only for a reader who is already there. A player who
-    // has scrolled up is reading, and yanking them back is the defect.
-    if (following.current) toBottom();
-  }, [newestId, toBottom]);
+    if (active === 'execlog') setSeenLogId(newestLogId);
+    else setSeenLineId(newestLineId);
+  }, [active, newestLogId, newestLineId]);
 
-  const onScroll = useCallback(() => {
-    const el = scrollRef.current;
-    if (!el) return;
-    const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight <= FOLLOW_SLACK_PX;
-    following.current = atBottom;
-    // Remember where the reader detached, so the badge can say how much has
-    // arrived since rather than merely that something has.
-    setDetachedFrom((from) => (atBottom ? null : (from ?? newestId)));
-  }, [newestId]);
+  const unreadLog =
+    active === 'execlog'
+      ? 0
+      : countNewer(
+          telemetry.log.map((entry) => entry.id),
+          seenLogId,
+        );
+  const unreadLines =
+    active === 'output'
+      ? 0
+      : countNewer(
+          terminal.map((line) => line.id),
+          seenLineId,
+        );
+
+  const output = useFollowTail(newestLineId);
+  const { toBottom } = output;
 
   // A collapsed body has no height, so its scroll position is lost; snap back to
   // the newest line when it reappears rather than waiting for the next output.
@@ -62,32 +75,64 @@ export function TerminalPanel() {
     [toBottom],
   );
 
-  const pending = detachedFrom === null ? 0 : newestId - detachedFrom;
+  const tabs = tabbed ? (
+    <div className="terminal-tabs" role="tablist" aria-label="Terminal history">
+      <button
+        type="button"
+        role="tab"
+        aria-selected={active === 'output'}
+        className={active === 'output' ? 'terminal-tab terminal-tab-on' : 'terminal-tab'}
+        onClick={() => setTab('output')}
+      >
+        OUTPUT
+        {unreadLines > 0 && <span className="terminal-tab-new"> [{unreadLines}]</span>}
+      </button>
+      <button
+        type="button"
+        role="tab"
+        aria-selected={active === 'execlog'}
+        className={active === 'execlog' ? 'terminal-tab terminal-tab-on' : 'terminal-tab'}
+        onClick={() => setTab('execlog')}
+      >
+        EXECUTION LOG
+        {unreadLog > 0 && <span className="terminal-tab-new"> [{unreadLog}]</span>}
+      </button>
+    </div>
+  ) : null;
 
   return (
-    <Panel id="terminal" title="SYSTEM TERMINAL" className="terminal-panel" onToggle={onToggle}>
-      <div
-        className="terminal-output"
-        ref={scrollRef}
-        onScroll={onScroll}
-        aria-live="polite"
-        aria-label="Terminal"
-      >
-        {terminal.map((line) => (
-          <p key={line.id} className={`terminal-line term-${line.kind}`}>
-            {line.text}
-          </p>
-        ))}
-        <p className="terminal-line">
-          <span className="terminal-prompt">&gt;&nbsp;</span>
-          <span className="terminal-cursor" aria-hidden="true" />
-        </p>
-      </div>
-      {detachedFrom !== null && (
-        <button type="button" className="terminal-follow" onClick={toBottom}>
-          {pending > 0 ? `${pending} NEW LINE${pending === 1 ? '' : 'S'} BELOW` : 'SCROLLED BACK'}{' '}
-          &darr;
-        </button>
+    <Panel
+      id="terminal"
+      title="SYSTEM TERMINAL"
+      className="terminal-panel"
+      aside={tabs}
+      onToggle={onToggle}
+    >
+      {active === 'execlog' ? (
+        <ExecutionLog />
+      ) : (
+        <>
+          <div
+            className="terminal-output"
+            ref={output.scrollRef}
+            onScroll={output.onScroll}
+            aria-live="polite"
+            aria-label="Terminal"
+          >
+            {terminal.map((line) => (
+              <p key={line.id} className={`terminal-line term-${line.kind}`}>
+                {line.text}
+              </p>
+            ))}
+            <p className="terminal-line">
+              <span className="terminal-prompt">&gt;&nbsp;</span>
+              <span className="terminal-cursor" aria-hidden="true" />
+            </p>
+          </div>
+          {output.detached && (
+            <FollowTailButton pending={output.pending} onClick={output.toBottom} />
+          )}
+        </>
       )}
     </Panel>
   );

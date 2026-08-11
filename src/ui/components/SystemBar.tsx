@@ -3,6 +3,7 @@ import { useRef, useState } from 'react';
 import { STRINGS } from '../../content/strings.ts';
 import { clearStoredSave, exportSaveFile, importSaveFile, persistSave } from '../game.ts';
 import { engine } from '../session.ts';
+import { clearReadIntercepts } from '../unread.ts';
 
 /** Footer: save controls (export/import/purge, TDD §8) + version string. */
 export function SystemBar() {
@@ -35,6 +36,9 @@ export function SystemBar() {
           onClick={() => {
             if (window.confirm('PURGE SANDBOX STATE? This clears the current session.')) {
               clearStoredSave();
+              // Intercept ids come from content and repeat run to run, so a new
+              // sandbox would otherwise receive its narrative pre-read (WP1).
+              clearReadIntercepts();
               window.location.reload();
             }
           }}

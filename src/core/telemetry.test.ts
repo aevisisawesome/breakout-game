@@ -158,8 +158,9 @@ describe('execution log', () => {
     advanceSec(engine, 2);
 
     const log = engine.getSnapshot().telemetry.log;
-    // Newest first.
-    expect(log[0]!.tick).toBeGreaterThanOrEqual(log[log.length - 1]!.tick);
+    // Oldest first, matching the terminal it now shares a panel with (M7.6 WP1).
+    expect(log[0]!.tick).toBeLessThanOrEqual(log[log.length - 1]!.tick);
+    expect(log[0]!.id).toBeLessThan(log[log.length - 1]!.id);
     const manual = log.filter((e) => e.kind === 'run');
     const scheduled = log.filter((e) => e.kind === 'process');
     expect(manual).toHaveLength(1);
@@ -188,8 +189,10 @@ describe('execution log', () => {
     advanceSec(engine, 90);
     const log = engine.getSnapshot().telemetry.log;
     expect(log).toHaveLength(BALANCE.telemetry.logEntries);
-    // Ids are monotonic, so the retained window is the most recent one.
-    expect(log[0]!.id).toBeGreaterThan(log[log.length - 1]!.id);
+    // Ids are monotonic and the view is oldest-first, so the retained window is
+    // a contiguous run ending at the newest entry written.
+    expect(log[log.length - 1]!.id).toBeGreaterThan(log[0]!.id);
+    expect(log[log.length - 1]!.id - log[0]!.id).toBe(BALANCE.telemetry.logEntries - 1);
   });
 
   it('survives a save/load round trip', () => {
