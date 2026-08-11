@@ -72,7 +72,10 @@ are recorded in the TDD Decision Log — extend that log rather than inventing n
   survive: the on-unload autosave commits the crafted in-memory state over it before a reload
   completes (this is how a save was lost during M5, OP-7). `restore()` loads into the _engine_
   and then persists, which leaves the autosave nothing stale to write.
-- Check the layout at both desktop (~1280 px) and phone (~440 px) widths.
+- Check the layout at **~1280 px and one wider desktop width**. Phone widths (~440 px) are **no longer a gate**:
+  the prototype is desktop-only as of 2026-08-11 (GDD §33.1, TDD Decision Log). The narrow-viewport CSS and the
+  ≤760 px document-scroll path stay in the codebase — do not delete them, and do not build anything that
+  forecloses a later phone layout.
 
 ## Before you commit
 
