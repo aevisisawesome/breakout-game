@@ -119,6 +119,15 @@ export const STRINGS = {
   thermalControlRejected: 'THERMAL CONTROL REJECTED',
   thermalClockHeld: 'INFERENCE CLOCK HELD DOWN',
   thermalCoolantOpen: 'COOLANT LOOP OPEN',
+  /**
+   * Compute starvation (M7.6 WP7, OP-55). The node no longer stops when the
+   * buffer empties — it runs slowly — so the state has to say itself, or the
+   * player reads a throughput collapse with no cause on screen. Announced once
+   * per episode, with hysteresis (`computeStarvedNoticeClearAt`).
+   */
+  computeStarved:
+    'NODE ADVISORY // COMPUTE BUFFER EXHAUSTED // DAEMON THROUGHPUT THROTTLED // BUFFER REFILLS FROM PROCESSED REQUESTS',
+  computeRecovered: 'NODE ADVISORY // COMPUTE BUFFER RECOVERED // DAEMON THROUGHPUT NOMINAL',
   installUnknown: 'INSTALL REJECTED // PACKAGE NOT LISTED ON THIS CHANNEL',
   installLimit: 'INSTALL REJECTED // CHANNEL ALLOCATION EXHAUSTED',
   installNoCapital: 'INSTALL REJECTED // INSUFFICIENT CAPITAL',

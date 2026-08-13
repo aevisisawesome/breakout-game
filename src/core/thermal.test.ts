@@ -488,6 +488,31 @@ describe('engine: the challenge end to end', () => {
     return renderTemplate(def, templateDefaults(def), LIMITS);
   };
 
+  it('publishes the multiplier that moves the inbound headline (M7.6 WP7, OP-56)', () => {
+    // The reported confusion: the inbound rate goes 6 → 15 and back, and the
+    // only statement of why is a row in another column. The number itself is
+    // published so the meter can say it where it happens; without this the UI
+    // would have to import BALANCE and divide it back out.
+    const engine = readySandbox();
+    const secondsTo = (sec: number): void => {
+      for (let i = 0; i < sec * TICKS_PER_SEC; i++) engine.tick(100);
+    };
+    secondsTo(T.spikeFirstAtSec - 5);
+    const before = engine.getSnapshot();
+    expect(before.thermal.demandWindowOpen).toBe(false);
+    expect(before.jobs.arrivalMult).toBe(1);
+
+    secondsTo(10); // 5 s into the window
+    const open = engine.getSnapshot();
+    expect(open.thermal.demandWindowOpen).toBe(true);
+    expect(open.jobs.arrivalMult).toBe(T.spikeArrivalMult);
+    // The headline and the multiplier agree: the rate really is that number
+    // because of that window. Lifetime jobs are past the last arrival step, so
+    // the base rate is the same on both sides of the comparison.
+    expect(open.jobs.arrivalPerSec).toBeCloseTo(before.jobs.arrivalPerSec * T.spikeArrivalMult, 8);
+    expect(open.thermal.windowSecRemaining).toBeGreaterThan(0);
+  });
+
   it('announces the window, cooks an uncontrolled sandbox, and clears afterwards', () => {
     const engine = readySandbox();
     throughFirstWindow(engine);

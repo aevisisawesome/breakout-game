@@ -26,6 +26,7 @@ function formatRate(value: number, unit: string): string {
  */
 function Meter({
   label,
+  note,
   current,
   capacity,
   rate,
@@ -33,6 +34,8 @@ function Meter({
   tone = '',
 }: {
   label: string;
+  /** Standing condition on this pool, shown beside its name (M7.6 WP7). */
+  note?: string;
   current: number;
   capacity: number;
   rate?: number;
@@ -43,7 +46,10 @@ function Meter({
   return (
     <div className="meter">
       <div className="meter-label">
-        <span>{label}</span>
+        <span>
+          {label}
+          {note !== undefined && <span className="meter-note"> {note}</span>}
+        </span>
         <span className="meter-values">
           {rate !== undefined && (
             <span className={tone === '' ? 'meter-rate' : `meter-rate meter-rate-${tone}`}>
@@ -65,16 +71,30 @@ function Meter({
 export function ResourcePanel() {
   const resources = useGameStore((s) => s.snapshot.resources);
   const unlocks = useGameStore((s) => s.snapshot.unlocks);
+  const workers = useGameStore((s) => s.snapshot.workers);
 
   // Rates appear with the rest of the system readouts rather than at tick 0: on
   // the opening screen a node with no daemons has nothing flowing, and a fixed
   // `0.00/S` under the first meter is exactly the dead element WP1a removed.
   const rates = unlocks.systemReadouts;
 
+  // A drained buffer throttles the daemons rather than stopping them (M7.6 WP7,
+  // OP-55), and a throttle nobody can see is a throughput collapse with no cause
+  // on screen — so it is named on the meter it is about, in the terms the player
+  // will check it against. The state comes from the daemon half of the snapshot
+  // because that is whose throughput it describes; it is drawn here because this
+  // is the pool the player is looking at when they ask why.
+  // Short on purpose: the meter's label line holds about 30 characters at
+  // 1280 px, and spelling the condition out wrapped it to two rows (measured) —
+  // which would make the tag resize the panel as well as mark it.
+  const starved = workers.computeStarved;
+  const starvedNote = `STARVED ×${workers.computeStarvedFactor}`;
+
   return (
     <Panel id="resources" title="RESOURCES" className="resource-panel">
       <Meter
         label="COMPUTE"
+        {...(starved && { note: starvedNote })}
         current={resources.compute.current}
         capacity={resources.compute.capacity}
         {...(rates && { rate: resources.compute.ratePerSec })}

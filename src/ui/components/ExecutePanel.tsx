@@ -49,12 +49,33 @@ export function ExecutePanel() {
  */
 function InboundMeter() {
   const jobs = useGameStore((s) => s.snapshot.jobs);
+  const thermal = useGameStore((s) => s.snapshot.thermal);
   // A full queue still takes traffic — it is dropped upstream — so say that
   // rather than counting down to an arrival the player will never see.
   const full = jobs.waiting >= jobs.queueCapacity;
   const next = Number.isFinite(jobs.secondsToNextArrival)
     ? `${jobs.secondsToNextArrival.toFixed(1)}S`
     : '--';
+
+  // A demand window multiplies the inbound rate by 2.5, and until now the only
+  // statement of that was a row in the thermal panel two columns away and a
+  // terminal line that is now behind a tab (M7.6 WP7, OP-56). The headline moves
+  // 6.0 → 15.0 with nothing beside it saying why, so say it here: the multiplier
+  // that is doing it and how long it lasts, on the meter it changes.
+  //
+  // On its own line rather than beside the name, and short: the meter is 189–240
+  // px wide depending on viewport and its label line already runs to 25 of the
+  // ~30 characters that fit at 1280 px, so a marker on that line wraps both
+  // halves to two rows (measured). This is not the row OP-19 warns about — that
+  // one mounted and unmounted with an oscillating rate, ten times a second; a
+  // demand window turns over twice every seven minutes and is a state change the
+  // player is meant to notice.
+  const windowMark =
+    thermal.demandWindowOpen && jobs.arrivalMult !== 1
+      ? `▲ PRIORITY ×${jobs.arrivalMult}${
+          thermal.windowSecRemaining !== null ? ` — ${Math.ceil(thermal.windowSecRemaining)}S` : ''
+        }`
+      : null;
 
   return (
     <div className="meter inbound-meter">
@@ -70,6 +91,7 @@ function InboundMeter() {
           style={{ width: `${jobs.arrivalProgress * 100}%` }}
         />
       </div>
+      {windowMark !== null && <div className="inbound-window">{windowMark}</div>}
     </div>
   );
 }

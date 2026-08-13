@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import { createGameEngine } from './engine.ts';
 import { deserializeSave, serializeSave } from './save.ts';
+import type { SaveFile } from './types.ts';
 
 describe('save serialization', () => {
   it('round-trips a live save exactly, including Infinity capacities', () => {
@@ -34,7 +35,19 @@ describe('save serialization', () => {
     const savedA = a.save(0);
     const savedB = b.save(0);
     // Terminal differs by the diegetic "state restored" line; everything simulated must match.
-    expect(savedB.run.resources).toEqual(savedA.run.resources);
+    //
+    // `ratePerSec` is excluded, and deliberately (M7.6 WP7, OP-54). It is not
+    // simulated state: it is a trailing window over the *session's* own history,
+    // never restored on a load (TDD §8, pinned by `rates.test.ts`). Since the
+    // pool window became 10 s it is longer than the 5 s engine B has been
+    // running since it loaded, so the two engines quote different rates while
+    // holding identical pools — the honest outcome rather than a divergence.
+    // Before the window changed, the comparison passed by accident.
+    const levels = (pools: SaveFile['run']['resources']): Record<string, [number, number]> =>
+      Object.fromEntries(
+        Object.entries(pools).map(([id, p]) => [id, [p.current, p.capacity] as [number, number]]),
+      );
+    expect(levels(savedB.run.resources)).toEqual(levels(savedA.run.resources));
     expect(savedB.run.jobs).toEqual(savedA.run.jobs);
     expect(savedB.run.rngState).toBe(savedA.run.rngState);
     expect(savedB.run.tick).toBe(savedA.run.tick);

@@ -442,6 +442,24 @@ button:hover {
   color: var(--term-bright);
 }
 
+/* Standing conditions named beside a meter's own label, rather than in a panel
+   the player would have to go and find (M7.6 WP7, OP-55 / OP-56): the compute
+   buffer running starved, and the demand window that is multiplying the inbound
+   rate. Both sit on the left of the label line so the numbers on the right keep
+   their positions, and both are additions to an existing line rather than rows
+   that mount and unmount — the OP-19 rule about panels resizing under the
+   player still holds. */
+.meter-note {
+  color: var(--term-error);
+}
+
+.inbound-window {
+  color: var(--term-bright);
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  margin-top: 0.2rem;
+}
+
 .meter-track {
   height: 8px;
   border: 1px solid var(--term-border);

@@ -491,6 +491,13 @@ export interface GameSnapshot {
     batchPerClick: number;
     /** Inbound request rate, including any open demand window (M7.5 WP1a). */
     arrivalPerSec: number;
+    /**
+     * The demand window's multiplier on that rate; 1 when no window is open
+     * (M7.6 WP7, OP-56). The inbound headline is `arrivalPerSec` and this is why
+     * it is that number — published so the meter can say so where it happens,
+     * rather than leaving the cause two columns away in the thermal panel.
+     */
+    arrivalMult: number;
     /** Progress towards the next request, 0..1 — the fractional arrival accumulator. */
     arrivalProgress: number;
     /** Seconds until the next request lands, at the current rate. */
@@ -501,6 +508,18 @@ export interface GameSnapshot {
     count: number;
     /** Total daemon throughput in jobs/sec (before overclock/throttle). */
     jobsPerSec: number;
+    /**
+     * True through a compute-starvation episode: the buffer could not cover one
+     * job's overhead and has not yet climbed back to `computeStarvedNoticeClearAt`
+     * (M7.6 WP7, OP-55). The node keeps working through it at
+     * `computeStarvedFactor` — it used to stop — which is exactly why it has to
+     * be said on screen: otherwise the player reads a throughput collapse with
+     * no cause anywhere near it. Hysteretic rather than the bare threshold, so a
+     * readout bound to it cannot flicker at 10 Hz.
+     */
+    computeStarved: boolean;
+    /** The multiplier that applies while starved, so the readout can quote it. */
+    computeStarvedFactor: number;
     overclockRemainingSec: number;
     overclockMaxSec: number;
     overclockMultiplier: number;

@@ -91,6 +91,25 @@ export const BALANCE = {
     energyPerWorkerPerSec: 0.5,
     /** Daemon throughput multiplier while the energy pool is exhausted. */
     energyThrottledFactor: 0.25,
+    /**
+     * Daemon throughput multiplier while the compute buffer cannot cover a job's
+     * overhead (M7.6 WP7, OP-55). Before this existed the buffer was a *gate*:
+     * at zero compute the daemons processed nothing, and processing is the only
+     * thing that makes compute — an absorbing state the node never left on its
+     * own. It is now a throttle, deliberately the same shape and the same number
+     * as the energy one: a drained pool costs throughput, it does not stop the
+     * node. A daemon job nets `computePerJob − computeOverheadPerJob` whatever
+     * the buffer holds, so a starved node always climbs back out.
+     */
+    computeStarvedFactor: 0.25,
+    /**
+     * Compute the buffer must climb back to before the starvation advisory
+     * re-arms — hysteresis, the same reason the thermal watchdog has a resume
+     * threshold. Without it a script burning fuel around the overhead boundary
+     * would print an advisory several times a second. Ten jobs' worth of
+     * overhead at the default.
+     */
+    computeStarvedNoticeClearAt: 4,
     /** Click overclock: each EXECUTE extends a capped buff that multiplies daemon throughput. */
     overclock: {
       secPerClick: 1.5,
@@ -264,20 +283,35 @@ export const BALANCE = {
     failureRatioWarn: 0.3,
   },
 
-  /** Resource readouts (M7.5 WP3, OP-19/OP-21; WP7, OP-35). */
+  /** Resource readouts (M7.5 WP3, OP-19/OP-21; WP7, OP-35; M7.6 WP7, OP-54). */
   readouts: {
     /**
-     * Trailing window, in seconds, over which measured flows are averaged for
-     * display: the compute and energy pools' own d/dt, and the core's °C/s. Long
-     * enough that one lumpy tick does not swing the number, short enough that the
-     * reading still answers "am I winning *now*" inside a demand window.
+     * Trailing window, in seconds, over which the **pool** flows are averaged for
+     * display: the compute and energy pools' own measured d/dt.
      *
-     * It is also what makes a discrete fill readable: a `buy_energy(40)` enters
-     * the window as +20/S and leaves it two seconds later, rather than showing as
-     * a single unreadable spike or — as before WP7 — not showing at all while the
-     * meter beside it jumped.
+     * Long, and deliberately so (M7.6 WP7, OP-54). A measured rate counts whole
+     * events inside a fixed span, so the span has to be long relative to how
+     * lumpy the source is or the readout quantizes to values the pool never
+     * actually moves at. One daemon is the lumpiest the game ever gets — a job
+     * every 1.67 s at `jobsPerSec` 0.6 — and at the 2 s window this used to be,
+     * the window held exactly one job or exactly two and the readout showed
+     * `+0.30/S` or `+0.60/S` and never the true `+0.36/S`. Ten seconds holds six
+     * jobs, so the reading is the rate rather than a coin flip about it.
+     *
+     * The price is response time, and it is paid where it costs least: a
+     * discrete fill (`buy_energy(40)`) now enters the window as +4/S for ten
+     * seconds rather than +20/S for two. The core's °C/s — the one number a
+     * controller is judged on — keeps its own short window below.
      */
-    rateWindowSec: 2,
+    poolRateWindowSec: 10,
+    /**
+     * Trailing window for the core's °C/s. Kept short: inside a demand window
+     * the temperature says where the core *is* and only its rate says whether
+     * the player is winning, so this readout is judged on how fast it answers.
+     * Heat is a true derivative rather than a count of discrete events, so it
+     * never had OP-54's quantization problem and does not need the long window.
+     */
+    tempRateWindowSec: 2,
   },
 
   save: {

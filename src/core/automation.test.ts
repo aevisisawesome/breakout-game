@@ -117,14 +117,80 @@ describe('inference daemons', () => {
     expect(snap.resources.capital.current).toBeCloseTo(processed * 0.25, 6);
   });
 
-  it('stall with an empty compute buffer (overhead is unaffordable)', () => {
-    const engine = engineWith((run) => {
+  /**
+   * M7.6 WP7 (OP-55). This block replaces a test that asserted the opposite —
+   * "stall with an empty compute buffer" — which pinned the soft-lock as
+   * intended behaviour. It was not: the overhead was a *gate*, processing a job
+   * is the only thing that makes compute, and so a node that reached zero never
+   * left. The reported route was ordinary play (a script calling `process_job`
+   * faster than income), and the only recovery was the manual click the whole
+   * design exists to make unnecessary.
+   */
+  describe('a drained compute buffer (OP-55)', () => {
+    /** The reported state: daemons, a full queue, and nothing in the buffer. */
+    const drained = (run: RunState): void => {
       run.jobs.lifetimeProcessed = 100;
-      run.upgrades = { 'worker-daemon': 2 };
+      run.upgrades = { 'worker-daemon': 3 };
+      run.jobs.waiting = BALANCE.jobs.queueCapacity;
+      run.resources.energy.current = BALANCE.resources.energyCapacity;
       run.resources.compute.current = 0;
+    };
+
+    it('is recoverable unattended: the node keeps working and climbs back out', () => {
+      const engine = engineWith(drained);
+      advance(engine, 60);
+      const snap = engine.getSnapshot();
+      // Before WP7 both of these were exactly zero after the same 60 s.
+      expect(snap.jobs.lifetimeProcessed).toBeGreaterThan(100);
+      expect(snap.resources.compute.current).toBeGreaterThan(0);
+      expect(snap.workers.computeStarved).toBe(false);
     });
-    advance(engine, 30);
-    expect(engine.getSnapshot().jobs.lifetimeProcessed).toBe(100);
+
+    it('costs throughput while it lasts, rather than costing everything', () => {
+      const starved = engineWith(drained);
+      const healthy = engineWith((run) => {
+        drained(run);
+        run.resources.compute.current = 100;
+      });
+      advance(starved, 3);
+      advance(healthy, 3);
+      const starvedJobs = starved.getSnapshot().jobs.lifetimeProcessed - 100;
+      const healthyJobs = healthy.getSnapshot().jobs.lifetimeProcessed - 100;
+      expect(starvedJobs).toBeGreaterThan(0);
+      expect(starvedJobs).toBeLessThan(healthyJobs);
+    });
+
+    it('says so, once, and says when it is over', () => {
+      const engine = engineWith(drained);
+      engine.tick(100);
+      expect(engine.getSnapshot().workers.computeStarved).toBe(true);
+      advance(engine, 60);
+      const lines = engine.getSnapshot().terminal.map((l) => l.text);
+      // Hysteresis: one advisory per episode, not one per tick spent near the
+      // overhead boundary.
+      expect(lines.filter((t) => t === STRINGS.computeStarved)).toHaveLength(1);
+      expect(lines.filter((t) => t === STRINGS.computeRecovered)).toHaveLength(1);
+    });
+
+    it('recovers across an offline catch-up, which carried the same gate', () => {
+      const engine = engineWith(drained);
+      engine.tick(100);
+      engine.advanceOffline(8 * 60 * 60 * 1000);
+      const snap = engine.getSnapshot();
+      expect(snap.jobs.lifetimeProcessed).toBeGreaterThan(100);
+      expect(snap.resources.compute.current).toBeGreaterThan(0);
+      // ...and the readout comes back describing the node that came back, not
+      // the one that left: a full buffer must not be tagged STARVED for the
+      // tick it takes the live loop to notice.
+      expect(snap.workers.computeStarved).toBe(false);
+    });
+
+    it('is guaranteed to recover, because a daemon job nets compute', () => {
+      // The invariant the fix rests on: without it the pool could be driven
+      // down by the very work that is supposed to refill it, and OP-55 would
+      // come back as a slow leak instead of a stall.
+      expect(BALANCE.jobs.computePerJob).toBeGreaterThan(BALANCE.workers.computeOverheadPerJob);
+    });
   });
 
   it('two same-seed engines with daemons stay in exact agreement', () => {

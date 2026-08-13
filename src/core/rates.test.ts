@@ -28,8 +28,17 @@ function engineWith(setup: (run: RunState) => void, seed = 42): GameEngine {
   return engine;
 }
 
-const WINDOW_SEC = BALANCE.readouts.rateWindowSec;
-const WINDOW_MS = WINDOW_SEC * 1000;
+const WINDOW_SEC = BALANCE.readouts.poolRateWindowSec;
+
+/**
+ * Advance sim time in 1 s slices, which keeps every step under the engine's
+ * per-advance catch-up cap (`MAX_TICKS_PER_ADVANCE`). The pool window is longer
+ * than that cap since M7.6 WP7 (OP-54), so a single `tick(WINDOW_MS)` would
+ * silently drop most of the time it was asked for.
+ */
+function advance(engine: GameEngine, seconds: number): void {
+  for (let i = 0; i < seconds; i++) engine.tick(1000);
+}
 
 /**
  * Once the ring is full it holds exactly the last `WINDOW_SEC` of steps, so the
@@ -37,7 +46,7 @@ const WINDOW_MS = WINDOW_SEC * 1000;
  * the whole of WP7's claim, expressed as arithmetic.
  */
 function ticksToFillWindow(engine: GameEngine): void {
-  engine.tick(WINDOW_MS + 1000);
+  advance(engine, WINDOW_SEC + 1);
 }
 
 /** A funded, fully granted sandbox with daemons running. */
@@ -100,7 +109,7 @@ describe('resource rates (OP-21)', () => {
         source: 'every 1 seconds {\n  x = 1 + 2 + 3 + 4 + 5\n}\n',
       }).ok,
     ).toBe(true);
-    engine.tick(WINDOW_MS);
+    advance(engine, WINDOW_SEC);
 
     const snap = engine.getSnapshot();
     const drawn = snap.scheduler.deployments
@@ -134,7 +143,7 @@ describe('resource rates (OP-21)', () => {
       }).ok,
     ).toBe(true);
     const before = engine.getSnapshot().resources.energy.current;
-    engine.tick(WINDOW_MS);
+    advance(engine, WINDOW_SEC);
     const snap = engine.getSnapshot();
     expect(snap.resources.energy.ratePerSec).toBeLessThan(idle);
     expect(snap.resources.energy.ratePerSec).toBeCloseTo(
@@ -190,7 +199,8 @@ describe('resource rates (OP-21)', () => {
     engine.dispatch({ type: 'RUN_SCRIPT', source: 'x = 1 + 2 + 3 + 4 + 5\n' });
     engine.tick(100);
     expect(engine.getSnapshot().resources.compute.ratePerSec).toBeLessThan(0);
-    engine.tick(BALANCE.readouts.rateWindowSec * 1000 - 200);
+    advance(engine, WINDOW_SEC - 1);
+    engine.tick(800);
     expect(engine.getSnapshot().resources.compute.ratePerSec).toBeLessThan(0);
     engine.tick(200);
     expect(engine.getSnapshot().resources.compute.ratePerSec).toBe(0);
@@ -240,7 +250,7 @@ describe('pool rates are the pool (OP-35)', () => {
     ticksToFillWindow(engine);
 
     const before = engine.getSnapshot().resources.compute.current;
-    engine.tick(WINDOW_MS);
+    advance(engine, WINDOW_SEC);
     const snap = engine.getSnapshot();
     const measured = snap.resources.compute.current - before;
     expect(measured).toBeGreaterThan(0); // the bar rose...
@@ -314,6 +324,72 @@ describe('pool rates are the pool (OP-35)', () => {
     // quoted over a single step, would be hundreds per second.
     expect(Math.abs(engine.getSnapshot().resources.energy.ratePerSec)).toBeLessThanOrEqual(
       BALANCE.resources.energyRegenPerSec + 1e-9,
+    );
+  });
+});
+
+/**
+ * M7.6 WP7 (OP-54): a measured rate counts whole events inside a fixed span, so
+ * the span has to be long relative to the gap between the events or the readout
+ * quantizes to values the pool never moves at. This is the cost WP7 knowingly
+ * bought when the rate became a d/dt, and it was worst exactly where a new
+ * player lives — one daemon, the lumpiest the game ever gets.
+ */
+describe('the rate a pool is actually moving at (OP-54)', () => {
+  /** One daemon, nothing else installed: the reported configuration. */
+  function oneDaemon(run: RunState): void {
+    run.jobs.lifetimeProcessed = 300; // arrivals outpace one daemon, so the queue stays fed
+    run.jobs.waiting = BALANCE.jobs.queueCapacity;
+    run.upgrades['worker-daemon'] = 1;
+    run.unlocks.systemReadouts = true;
+    run.resources.compute.current = 100;
+    run.resources.energy.current = BALANCE.resources.energyCapacity;
+  }
+
+  it('shows one daemon its own 0.36/s, not a flicker between 0.30 and 0.60', () => {
+    const engine = engineWith(oneDaemon);
+    ticksToFillWindow(engine);
+    // 0.6 jobs/s × (1 compute earned − 0.4 overhead) = 0.36 compute/s.
+    const truth =
+      BALANCE.workers.jobsPerSec *
+      (BALANCE.jobs.computePerJob - BALANCE.workers.computeOverheadPerJob);
+
+    const samples: number[] = [];
+    for (let i = 0; i < 600; i++) {
+      engine.tick(100);
+      samples.push(engine.getSnapshot().resources.compute.ratePerSec);
+    }
+    const min = Math.min(...samples);
+    const max = Math.max(...samples);
+    const mean = samples.reduce((a, b) => a + b, 0) / samples.length;
+
+    // The measurement in OP-54, taken on the 2 s window: `+0.30/S` on 80% of 600
+    // samples, `+0.60/S` on the other 20%, and the true rate never once shown.
+    expect(mean).toBeCloseTo(truth, 3);
+    expect(max - min).toBeLessThan(0.02);
+    expect(min).toBeGreaterThan(0.3);
+    expect(max).toBeLessThan(0.6);
+  });
+
+  it('leaves the core its own short window, which is the one a controller reads', () => {
+    // The cheap fix OP-54 lists is "a longer window", and its stated cost is
+    // "slows every rate's response including the thermal one". That cost is not
+    // paid: the pools and the core keep separate windows, and this pins the
+    // core's to `tempRateWindowSec` by arithmetic rather than by assertion.
+    const engine = engineWith(builtOut);
+    const tempSlots = BALANCE.readouts.tempRateWindowSec * TICKS_PER_SEC;
+    expect(tempSlots).toBeLessThan(BALANCE.readouts.poolRateWindowSec * TICKS_PER_SEC);
+
+    const temps: number[] = [];
+    for (let i = 0; i < tempSlots * 2; i++) {
+      engine.tick(100);
+      temps.push(engine.getSnapshot().resources.temperature.current);
+    }
+    const now = temps[temps.length - 1]!;
+    const oneWindowAgo = temps[temps.length - 1 - tempSlots]!;
+    expect(engine.getSnapshot().resources.temperature.ratePerSec).toBeCloseTo(
+      (now - oneWindowAgo) / BALANCE.readouts.tempRateWindowSec,
+      6,
     );
   });
 });

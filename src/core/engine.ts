@@ -216,13 +216,37 @@ export function createGameEngine(seed: number): GameEngine {
    * disagree with it. The `…AtLastReading` anchors are where each pool stood the
    * last time a rate was written, which is what makes the interval cover
    * transactions that landed *between* ticks as well as inside one.
+   *
+   * The pools and the core keep **different window lengths** (M7.6 WP7, OP-54).
+   * A pool's rate is a count of discrete events over a fixed span and quantizes
+   * hard when the span is short relative to the gap between events; the core's
+   * is a true derivative and does not. So the pools take the long window and the
+   * temperature keeps the short one, which is where response time is worth
+   * paying for.
    */
-  const rateSlots = Math.max(1, Math.round(BALANCE.readouts.rateWindowSec * TICKS_PER_SEC));
-  const computeFlowWindow = new RateWindow(rateSlots);
-  const energyFlowWindow = new RateWindow(rateSlots);
-  const temperatureWindow = new RateWindow(rateSlots);
+  const poolSlots = Math.max(1, Math.round(BALANCE.readouts.poolRateWindowSec * TICKS_PER_SEC));
+  const tempSlots = Math.max(1, Math.round(BALANCE.readouts.tempRateWindowSec * TICKS_PER_SEC));
+  const computeFlowWindow = new RateWindow(poolSlots);
+  const energyFlowWindow = new RateWindow(poolSlots);
+  const temperatureWindow = new RateWindow(tempSlots);
   let computeAtLastReading = run.resources.compute.current;
   let energyAtLastReading = run.resources.energy.current;
+
+  /**
+   * True while the node is in a compute-starvation episode (M7.6 WP7, OP-55).
+   * Session state, not run state: it is derived from the pool, and a reload that
+   * lands in a starved node should say so again rather than stay quiet because a
+   * save remembered having said it once.
+   *
+   * It carries hysteresis, and the readout reads *this* rather than the bare
+   * `current < overhead` test that gates the throttle. A script trading around
+   * the overhead boundary crosses it many times a second, and a tag driven off
+   * the bare test would mount and unmount at 10 Hz — resizing the resource panel
+   * and everything below it, which is exactly the defect OP-19 removed. It also
+   * keeps the meter and the terminal telling the same story: the tag is on for
+   * precisely the episode the advisory announced.
+   */
+  let computeStarved = false;
 
   function resetRateWindows(): void {
     computeFlowWindow.reset();
@@ -350,6 +374,31 @@ export function createGameEngine(seed: number): GameEngine {
     if (open === thermal.demandWindowOpen) return;
     thermal.demandWindowOpen = open;
     terminal('system', open ? STRINGS.thermalWindowOpen : STRINGS.thermalWindowClosed);
+  }
+
+  /**
+   * Compute starvation (M7.6 WP7, OP-55). Daemons keep working through a drained
+   * buffer at `computeStarvedFactor`, so the throttle is invisible unless it is
+   * said: the player sees throughput collapse with nothing on screen naming a
+   * cause, which is the half of OP-55 that is a legibility defect rather than a
+   * soft-lock. Announced on entry and cleared only once the buffer is back above
+   * `computeStarvedNoticeClearAt` — the same hysteresis the watchdog has, and for
+   * the same reason, since a script trading around the overhead boundary would
+   * otherwise print an advisory several times a second.
+   */
+  function updateComputeStarvation(derived: DerivedStats): void {
+    const w = BALANCE.workers;
+    const compute = run.resources.compute;
+    const starving = derived.workerCount > 0 && compute.current < w.computeOverheadPerJob;
+    if (starving && !computeStarved) {
+      computeStarved = true;
+      terminal('system', STRINGS.computeStarved);
+      return;
+    }
+    if (computeStarved && compute.current >= w.computeStarvedNoticeClearAt) {
+      computeStarved = false;
+      terminal('system', STRINGS.computeRecovered);
+    }
   }
 
   /**
@@ -825,10 +874,17 @@ export function createGameEngine(seed: number): GameEngine {
     const compute = run.resources.compute;
     const energy = run.resources.energy;
     const energyEmpty = energy.current <= 0;
+    // A buffer that cannot cover one job's overhead throttles the daemons; it
+    // does not stop them (M7.6 WP7, OP-55). The gate this replaces was an
+    // absorbing state: processing is the only thing that makes compute, so a
+    // node that could not afford to process never processed again — not while
+    // the player watched, and not across an offline catch-up either.
+    const computeStarving = derived.workerCount > 0 && compute.current < w.computeOverheadPerJob;
     const efficiency = thermalEfficiency(run.resources.temperature.current);
     const rateMult =
       (overclockActive ? w.overclock.multiplier : 1) *
       (energyEmpty ? w.energyThrottledFactor : 1) *
+      (computeStarving ? w.computeStarvedFactor : 1) *
       efficiency *
       (thermal.throttleRemainingSec > 0 ? BALANCE.thermal.clockThrottleFactor : 1);
     const effectiveRate = derived.workerJobsPerSec * rateMult;
@@ -837,17 +893,17 @@ export function createGameEngine(seed: number): GameEngine {
     let processed = 0;
     if (!halted && derived.workerCount > 0) {
       workers.processAccumulator += effectiveRate * dtSec;
-      const affordable =
-        w.computeOverheadPerJob > 0
-          ? Math.floor(compute.current / w.computeOverheadPerJob)
-          : Number.MAX_SAFE_INTEGER;
-      processed = Math.min(Math.floor(workers.processAccumulator), run.jobs.waiting, affordable);
+      processed = Math.min(Math.floor(workers.processAccumulator), run.jobs.waiting);
       if (processed > 0) {
         workers.processAccumulator -= processed;
         run.jobs.waiting -= processed;
         run.jobs.lifetimeProcessed += processed;
+        // Net per job, and it is positive by construction (`computePerJob` >
+        // `computeOverheadPerJob`, pinned by a test) — which is what makes a
+        // starved node climb out on its own rather than settle at zero. The
+        // floor is a guard on that invariant, not a live branch.
         const netCompute = BALANCE.jobs.computePerJob - w.computeOverheadPerJob;
-        compute.current = Math.min(compute.capacity, compute.current + netCompute * processed);
+        compute.current = clamp(compute.current + netCompute * processed, 0, compute.capacity);
         run.resources.capital.current += BALANCE.jobs.capitalPerJob * processed;
         addHeat(heatOfJobs(processed));
       }
@@ -869,6 +925,7 @@ export function createGameEngine(seed: number): GameEngine {
     );
 
     applyPoolCapacities(derived);
+    updateComputeStarvation(derived);
 
     // Display rates (M7.5 WP7, OP-35 — this supersedes WP3's part-modelled shape).
     //
@@ -1672,6 +1729,11 @@ export function createGameEngine(seed: number): GameEngine {
           // The *effective* rate, demand window included, so the inbound
           // readout and the countdown beside it cannot disagree (M7.5 WP1a).
           arrivalPerSec: derived.arrivalPerSec * snapshotEnv.arrivalMult,
+          // Published rather than left for the UI to infer (M7.6 WP7, OP-56):
+          // the inbound headline moves 6 → 15 when a demand window opens, and
+          // the multiplier is the whole explanation. It is a balance number, so
+          // the alternative would be the UI importing BALANCE to divide it out.
+          arrivalMult: snapshotEnv.arrivalMult,
           arrivalProgress: Math.max(0, Math.min(1, run.jobs.arrivalAccumulator)),
           secondsToNextArrival: secondsToNextArrival(derived, snapshotEnv),
           lifetimeProcessed: run.jobs.lifetimeProcessed,
@@ -1679,6 +1741,8 @@ export function createGameEngine(seed: number): GameEngine {
         workers: {
           count: derived.workerCount,
           jobsPerSec: derived.workerJobsPerSec,
+          computeStarved,
+          computeStarvedFactor: BALANCE.workers.computeStarvedFactor,
           overclockRemainingSec: run.workers.overclockRemainingSec,
           overclockMaxSec: BALANCE.workers.overclock.maxSec,
           overclockMultiplier: BALANCE.workers.overclock.multiplier,
@@ -1832,7 +1896,11 @@ export function createGameEngine(seed: number): GameEngine {
         const compute = run.resources.compute;
         const energy = run.resources.energy;
         let processed = 0;
-        if (derived.workerCount > 0 && queued > 0 && compute.current >= w.computeOverheadPerJob) {
+        // No compute gate here either (M7.6 WP7, OP-55): the offline path carried
+        // the same one, so a node that drained its buffer before the player left
+        // came back eight hours later with nothing processed. A drained buffer is
+        // costed below, as time spent throttled.
+        if (derived.workerCount > 0 && queued > 0) {
           // Energy steady state: full speed while the budget lasts, throttled after.
           const drainRate = derived.energyDrainPerSec;
           const budget = energy.current + derived.energyRegenPerSec * chunk;
@@ -1851,7 +1919,20 @@ export function createGameEngine(seed: number): GameEngine {
             derived.workerJobsPerSec * thermalEfficiency(settled),
             sustainableJobsPerSec(env, scriptHeatPerSec),
           );
-          const potential = thermalRate * (fullSec + throttledSec * w.energyThrottledFactor);
+          // Energy-weighted seconds of work available in this chunk, then the
+          // same treatment for a drained compute buffer: a chunk that begins
+          // starved runs throttled until the first job lands and refills it
+          // (one job nets `computePerJob − computeOverheadPerJob`), and at the
+          // usual ceiling after that. Two independent throttles, each costed as
+          // the seconds it applies to, which is how the offline path costs
+          // everything else it cannot simulate tick by tick (TDD §4.5).
+          const effectiveSec = fullSec + throttledSec * w.energyThrottledFactor;
+          const starvedRate = thermalRate * w.computeStarvedFactor;
+          const starvedSec =
+            compute.current < w.computeOverheadPerJob && starvedRate > 0
+              ? Math.min(effectiveSec, 1 / starvedRate)
+              : 0;
+          const potential = thermalRate * (effectiveSec - starvedSec) + starvedRate * starvedSec;
           processed = Math.floor(Math.min(queued, potential));
 
           const netCompute = BALANCE.jobs.computePerJob - w.computeOverheadPerJob;
@@ -1862,8 +1943,7 @@ export function createGameEngine(seed: number): GameEngine {
           totalCapital += BALANCE.jobs.capitalPerJob * processed;
 
           const utilization = potential > 0 ? processed / potential : 0;
-          const drained =
-            drainRate * utilization * (fullSec + throttledSec * w.energyThrottledFactor);
+          const drained = drainRate * utilization * effectiveSec;
           energy.current = clamp(
             energy.current + derived.energyRegenPerSec * chunk - drained,
             0,
@@ -1902,6 +1982,11 @@ export function createGameEngine(seed: number): GameEngine {
       // The measured rates describe the last couple of seconds of play; nothing
       // they hold survived the absence (M7.5 WP3).
       resetRateWindows();
+      // The buffer moved across the catch-up, so the starvation readout has to
+      // be re-derived here rather than a tick later: a node that left starved
+      // and came back full would otherwise greet the player with a STARVED tag
+      // on a full meter (M7.6 WP7, OP-55).
+      updateComputeStarvation(finalDerived);
       checkUnlocks();
       checkNarrative();
 
