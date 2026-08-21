@@ -72,6 +72,17 @@ are recorded in the TDD Decision Log — extend that log rather than inventing n
   survive: the on-unload autosave commits the crafted in-memory state over it before a reload
   completes (this is how a save was lost during M5, OP-7). `restore()` loads into the _engine_
   and then persists, which leaves the autosave nothing stale to write.
+- **The sim only advances while the browser pane is actually displayed.** `startGameLoop`
+  drives the engine from `requestAnimationFrame` (`src/ui/game.ts`), and rAF does not fire
+  in a hidden or non-compositing tab — so a headless/background preview sits at tick 0 and
+  reads as "nothing is happening" when the build is fine. Two consequences when verifying
+  without a visible pane: drive time yourself with a loop of `__breakout.engine.tick(100)`
+  (one 100 ms step per call; `tick()` drops anything past `MAX_TICKS_PER_ADVANCE` = 50, so
+  a single `tick(10000)` silently advances 5 s, not 10), and force a re-render afterwards —
+  the store only re-syncs on an engine _event_, so a plain `tick()` changes state without
+  repainting. Dispatching `SET_EDITOR_SOURCE` with the current source emits one and costs
+  nothing. React commits asynchronously, so read the DOM in a **separate** tool call from
+  the one that triggered the sync, or you will read the previous frame.
 - Check the layout at **~1280 px and one wider desktop width**. Phone widths (~440 px) are **no longer a gate**:
   the prototype is desktop-only as of 2026-08-11 (GDD §33.1, TDD Decision Log). The narrow-viewport CSS and the
   ≤760 px document-scroll path stay in the codebase — do not delete them, and do not build anything that
